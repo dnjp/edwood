@@ -94,7 +94,7 @@ func (w *Window) initHeadless(clone *Window) *Window {
 
 	w.filemenu = true
 	w.autoindent = *globalAutoIndent
-	w.tabexpand = true
+	w.tabexpand = false
 
 	if clone != nil {
 		w.autoindent = clone.autoindent

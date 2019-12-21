@@ -233,6 +233,7 @@ func edit(et *Text, _ *Text, argt *Text, _, _ bool, arg string) {
 		return
 	}
 	r, _ := getarg(argt, false, true)
+	
 	seq++
 	if r != "" {
 		editcmd(et, []rune(r))
@@ -710,7 +711,23 @@ func tab(et *Text, _ *Text, argt *Text, _, _ bool, arg string) {
 		}
 	}
 	if tab > 0 {
-		if w.body.tabstop != int(tab) {
+		if w.body.tabstop != int(tab) {		
+
+			// replace spaces with new tab size
+			if w.tabexpand {
+				var replacement strings.Builder
+				replacement.WriteString(", s/^")
+				for i :=0; i < w.body.tabstop; i++ {
+					replacement.WriteString(" ")
+				}
+				replacement.WriteString("/")
+				for i :=0; i < int(tab); i++ {
+					replacement.WriteString(" ")
+				}
+				replacement.WriteString("/g")
+				editcmd(et, []rune(replacement.String()))
+			}
+
 			w.body.tabstop = int(tab)
 			w.Resize(w.r, false, true)
 		}
