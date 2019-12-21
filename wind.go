@@ -52,7 +52,7 @@ type Window struct {
 	utflastq    int    // Rune offset of last read of body or tag
 	tagsafe     bool
 	tagexpand   bool
-	tabexpand  bool
+	tabexpand   bool
 	taglines    int
 	tagtop      image.Rectangle
 	editoutlk   chan bool

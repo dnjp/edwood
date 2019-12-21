@@ -857,7 +857,7 @@ func (t *Text) Type(r rune) {
 			t.Show(t.file.Size(), t.file.Size(), false)
 		}
 		return
-	case 0x09:	// ^I (TAB)
+	case 0x09: // ^I (TAB)
 		if t.w.body.texpand == true {
 			for i := 0; i < t.w.body.tabstop; i++ {
 				t.Type(' ')
