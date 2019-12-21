@@ -855,6 +855,17 @@ func (t *Text) Type(r rune) {
 			t.Show(t.file.Size(), t.file.Size(), false)
 		}
 		return
+// 	case 0x09:	// ^I (TAB)
+// 		if(t.w.tabexpand == true) {
+// 			for i := 0; i < t.w.body.tabstop; i++ {
+// 				t.Type(' ')
+// 			}
+// 			return
+// 		} else {
+// 			log.Printf("Tab: %d", t.tabstop)
+// 		}
+// 		fallthrough
+
 	case 0x01: // ^A: beginning of line
 		t.TypeCommit()
 		// go to where ^U would erase, if not already at BOL
@@ -933,14 +944,7 @@ func (t *Text) Type(r rune) {
 		}
 		nr = len(rp) // runestrlen(rp);
 		// break into normal insertion case
-	case 0x09:	/* ^I (TAB) */
-		if(t.w.tabexpand == true) {
-			for i := 0; i < t.w.body.tabstop; i++ {
-				t.Type(' ');
-			}
-			return;
-		} 
-		fallthrough;
+
 	case 0x1B:
 		if t.eq0 != ^0 {
 			if t.eq0 <= t.q0 {
@@ -972,7 +976,6 @@ func (t *Text) Type(r rune) {
 		if t.q0 == 0 { // nothing to erase
 			return
 		}
-
 		nnb = t.BsWidth(r)
 		q1 = t.q0
 		q0 = q1 - nnb

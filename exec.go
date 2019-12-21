@@ -719,14 +719,17 @@ func tab(et *Text, _ *Text, argt *Text, _, _ bool, arg string) {
 }
 
 func tabexpand(et *Text, _ *Text, argt *Text, _, _ bool, arg string) {
-
-
 	if(et == nil || et.w == nil) {
 		return;
 	}
 	w := et.w
-
-	fmt.Printf("tabexpand: %d\n", w.tabexpand)
+	if w.tabexpand {
+		w.tabexpand = false;
+		warning(nil, "%s: Tab: %d, Tabexpand OFF\n", w.body.file.name, w.body.tabstop);
+	} else {
+		w.tabexpand = true;
+		warning(nil, "%s: Tab: %d, Tabexpand ON\n", w.body.file.name, w.body.tabstop);
+	}
 }
 
 func fontx(et *Text, _ *Text, argt *Text, _, _ bool, arg string) {

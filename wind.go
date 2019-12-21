@@ -67,7 +67,7 @@ func (w *Window) initHeadless(clone *Window) *Window {
 	w.tag.w = w
 	w.taglines = 1
 	w.tagsafe = false
-	w.tagexpand = true
+	w.tagexpand = false
 	w.body.w = w
 	w.incl = []string{}
 	WinID++
@@ -98,6 +98,7 @@ func (w *Window) initHeadless(clone *Window) *Window {
 
 	if clone != nil {
 		w.autoindent = clone.autoindent
+		w.tabexpand = clone.tabexpand
 	}
 	w.editoutlk = make(chan bool, 1)
 	return w
