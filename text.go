@@ -933,6 +933,14 @@ func (t *Text) Type(r rune) {
 		}
 		nr = len(rp) // runestrlen(rp);
 		// break into normal insertion case
+	case 0x09:	/* ^I (TAB) */
+		if(t.w.tabexpand == true) {
+			for i := 0; i < t.w.body.tabstop; i++ {
+				t.Type(' ');
+			}
+			return;
+		} 
+		fallthrough;
 	case 0x1B:
 		if t.eq0 != ^0 {
 			if t.eq0 <= t.q0 {

@@ -55,6 +55,7 @@ var exectab = []Exectab{
 	{"Snarf", cut, false, true, false},
 	{"Sort", sortx, false, true /*unused*/, true /*unused*/},
 	{"Tab", tab, false, true /*unused*/, true /*unused*/},
+	{"Tabexpand", tabexpand, false, true /*unused*/, true /*unused*/},
 	{"Undo", undo, false, true, true /*unused*/},
 	{"Zerox", zeroxx, false, true /*unused*/, true /*unused*/},
 }
@@ -715,6 +716,17 @@ func tab(et *Text, _ *Text, argt *Text, _, _ bool, arg string) {
 	} else {
 		warning(nil, "%s: Tab %d\n", w.body.file.name, w.body.tabstop)
 	}
+}
+
+func tabexpand(et *Text, _ *Text, argt *Text, _, _ bool, arg string) {
+
+
+	if(et == nil || et.w == nil) {
+		return;
+	}
+	w := et.w
+
+	fmt.Printf("tabexpand: %d\n", w.tabexpand)
 }
 
 func fontx(et *Text, _ *Text, argt *Text, _, _ bool, arg string) {
