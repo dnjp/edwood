@@ -704,6 +704,7 @@ func tab(et *Text, _ *Text, argt *Text, _, _ bool, arg string) {
 		args := strings.Split(arg, " ")
 		arg = args[0]
 		p := arg
+		if len(p) == 0 { return }
 		if '0' <= p[0] && p[0] <= '9' {
 			tab, _ = strconv.ParseInt(p, 10, 16)
 		}

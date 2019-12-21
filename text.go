@@ -855,17 +855,13 @@ func (t *Text) Type(r rune) {
 			t.Show(t.file.Size(), t.file.Size(), false)
 		}
 		return
-// 	case 0x09:	// ^I (TAB)
-// 		if(t.w.tabexpand == true) {
-// 			for i := 0; i < t.w.body.tabstop; i++ {
-// 				t.Type(' ')
-// 			}
-// 			return
-// 		} else {
-// 			log.Printf("Tab: %d", t.tabstop)
-// 		}
-// 		fallthrough
-
+	case 0x09:	// ^I (TAB)
+		if(t.w.tabexpand == true) {
+			for i := 0; i < t.w.body.tabstop; i++ {
+				t.Type(' ')
+			}
+			return
+		}
 	case 0x01: // ^A: beginning of line
 		t.TypeCommit()
 		// go to where ^U would erase, if not already at BOL
