@@ -713,8 +713,8 @@ func tab(et *Text, _ *Text, argt *Text, _, _ bool, arg string) {
 	if tab > 0 {
 		if w.body.tabstop != int(tab) {		
 
-			// replace spaces with new tab size
-			if w.tabexpand {
+			// replace spaces with new tab width
+			if w.body.texpand {
 				var replacement strings.Builder
 				replacement.WriteString(", s/^")
 				for i :=0; i < w.body.tabstop; i++ {
