@@ -250,14 +250,14 @@ var boxcursor = draw.Cursor{
 func iconinit(display draw.Display) {
 	//TODO(flux): Probably should de-globalize colors.
 	if tagcolors[frame.ColBack] == nil {
-		tagcolors[frame.ColBack] = display.AllocImageMix(draw.Palebluegreen, draw.White)
-		tagcolors[frame.ColHigh], _ = display.AllocImage(image.Rect(0, 0, 1, 1), display.ScreenImage().Pix(), true, draw.Palegreygreen)
-		tagcolors[frame.ColBord], _ = display.AllocImage(image.Rect(0, 0, 1, 1), display.ScreenImage().Pix(), true, draw.Purpleblue)
+		tagcolors[frame.ColBack] = display.White()
+		tagcolors[frame.ColHigh], _ = display.AllocImage(image.Rect(0, 0, 1, 1), display.ScreenImage().Pix(), true, 0xD2D7D3FF)
+		tagcolors[frame.ColBord], _ = display.AllocImage(image.Rect(0, 0, 1, 1), display.ScreenImage().Pix(), true, 0xDADFE1FF)
 		tagcolors[frame.ColText] = display.Black()
 		tagcolors[frame.ColHText] = display.Black()
-		textcolors[frame.ColBack] = display.AllocImageMix(draw.Paleyellow, draw.White)
-		textcolors[frame.ColHigh], _ = display.AllocImage(image.Rect(0, 0, 1, 1), display.ScreenImage().Pix(), true, draw.Darkyellow)
-		textcolors[frame.ColBord], _ = display.AllocImage(image.Rect(0, 0, 1, 1), display.ScreenImage().Pix(), true, draw.Yellowgreen)
+		textcolors[frame.ColBack], _ = display.AllocImage(image.Rect(0, 0, 1, 1), display.ScreenImage().Pix(), true, 0xFFFFF5FF)
+		textcolors[frame.ColHigh], _ = display.AllocImage(image.Rect(0, 0, 1, 1), display.ScreenImage().Pix(), true, 0xE8EBE9FF)
+		textcolors[frame.ColBord], _ = display.AllocImage(image.Rect(0, 0, 1, 1), display.ScreenImage().Pix(), true, 0xEEEEEEFF)
 		textcolors[frame.ColText] = display.Black()
 		textcolors[frame.ColHText] = display.Black()
 	}
@@ -275,11 +275,11 @@ func iconinit(display draw.Display) {
 	r.Max.X -= display.ScaleSize(ButtonBorder)
 	modbutton.Border(r, display.ScaleSize(ButtonBorder), tagcolors[frame.ColBord], image.Point{})
 	r = r.Inset(display.ScaleSize(ButtonBorder))
-	tmp, _ := display.AllocImage(image.Rect(0, 0, 1, 1), display.ScreenImage().Pix(), true, draw.Medblue)
+	tmp, _ := display.AllocImage(image.Rect(0, 0, 1, 1), display.ScreenImage().Pix(), true, 0xD2D7D3FF)
 	modbutton.Draw(r, tmp, nil, image.Point{})
 
 	r = button.R()
-	colbutton, _ = display.AllocImage(r, display.ScreenImage().Pix(), false, draw.Purpleblue)
+	colbutton, _ = display.AllocImage(r, display.ScreenImage().Pix(), false, 0xF3F1EFFF)
 
 	but2col, _ = display.AllocImage(image.Rect(0, 0, 1, 1), display.ScreenImage().Pix(), true, 0xAA0000FF)
 	but3col, _ = display.AllocImage(image.Rect(0, 0, 1, 1), display.ScreenImage().Pix(), true, 0x006600FF)
