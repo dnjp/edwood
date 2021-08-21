@@ -9,8 +9,10 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"github.com/rjkroege/edwood/internal/draw"
-	"github.com/rjkroege/edwood/internal/dumpfile"
+	"github.com/rjkroege/edwood/draw"
+	"github.com/rjkroege/edwood/dumpfile"
+	"github.com/rjkroege/edwood/file"
+	"github.com/rjkroege/edwood/util"
 )
 
 const RowTag = "Newcol Kill Putall Dump Exit"
@@ -34,8 +36,9 @@ func (row *Row) Init(r image.Rectangle, dis draw.Display) *Row {
 	r1 := r
 	r1.Max.Y = r1.Min.Y + fontget(tagfont, row.display).Height()
 	t := &row.tag
-	f := new(File)
-	t.file = f.AddText(t)
+	f := file.MakeObservableEditableBuffer("", nil)
+	f.AddObserver(t)
+	t.file = f
 	t.Init(r1, tagfont, tagcolors, row.display)
 	t.what = Rowtag
 	t.row = row
@@ -76,7 +79,7 @@ func (row *Row) Add(c *Column, x int) *Column {
 		}
 		row.display.ScreenImage().Draw(r, row.display.White(), nil, image.Point{})
 		r1 := r
-		r1.Max.X = min(x-row.display.ScaleSize(Border), r.Max.X-row.display.ScaleSize(50))
+		r1.Max.X = util.Min(x-row.display.ScaleSize(Border), r.Max.X-row.display.ScaleSize(50))
 		if r1.Dx() < row.display.ScaleSize(50) {
 			r1.Max.X = r1.Min.X + row.display.ScaleSize(50)
 		}
@@ -159,11 +162,11 @@ func (row *Row) DragCol(c *Column, _ int) {
 			goto Found
 		}
 	}
-	acmeerror("can't find column", nil)
+	util.AcmeError("can't find column", nil)
 
 Found:
 	p = mouse.Point
-	if abs(p.X-op.X) < 5 && abs(p.Y-op.Y) < 5 {
+	if util.Abs(p.X-op.X) < 5 && util.Abs(p.Y-op.Y) < 5 {
 		return
 	}
 	if (i > 0 && p.X < row.col[i-1].r.Min.X) || (i < len(row.col)-1 && p.X > c.r.Max.X) {
@@ -216,7 +219,7 @@ func (row *Row) Close(c *Column, dofree bool) {
 			goto Found
 		}
 	}
-	acmeerror("can't find column", nil)
+	util.AcmeError("can't find column", nil)
 Found:
 	r = c.r
 	if dofree {
@@ -332,7 +335,7 @@ func (r *Row) Dump(file string) error {
 }
 
 func (r *Row) dump() (*dumpfile.Content, error) {
-	rowTag := string(r.tag.file.b)
+	rowTag := r.tag.file.String()
 	// Remove commands at the beginning of row tag.
 	if i := strings.Index(rowTag, RowTag); i > 1 {
 		rowTag = rowTag[i:]
@@ -350,13 +353,13 @@ func (r *Row) dump() (*dumpfile.Content, error) {
 		Windows: nil,
 	}
 
-	dumpid := make(map[*File]int)
+	dumpid := make(map[*file.ObservableEditableBuffer]int)
 
 	for i, c := range r.col {
 		dump.Columns[i] = dumpfile.Column{
 			Position: 100.0 * float64(c.r.Min.X-row.r.Min.X) / float64(r.r.Dx()),
 			Tag: dumpfile.Text{
-				Buffer: string(c.tag.file.b),
+				Buffer: c.tag.file.String(),
 				Q0:     c.tag.q0,
 				Q1:     c.tag.q1,
 			},
@@ -411,7 +414,7 @@ func (r *Row) dump() (*dumpfile.Content, error) {
 				dw.ExecDir = w.dumpdir
 				dw.ExecCommand = w.dumpstr
 
-			case !w.body.file.Dirty() && access(t.file.name) || w.body.file.IsDir():
+			case !w.body.file.Dirty() && access(t.file.Name()) || w.body.file.IsDir():
 				dumpid[t.file] = w.id
 				dw.Type = dumpfile.Saved
 
@@ -419,10 +422,10 @@ func (r *Row) dump() (*dumpfile.Content, error) {
 				dumpid[t.file] = w.id
 				// TODO(rjk): Conceivably this is a bit of a layering violation?
 				dw.Type = dumpfile.Unsaved
-				dw.Body.Buffer = string(t.file.b)
+				dw.Body.Buffer = t.file.String()
 			}
 			dw.Tag = dumpfile.Text{
-				Buffer: string(w.tag.file.b),
+				Buffer: w.tag.file.String(),
 				Q0:     w.tag.q0,
 				Q1:     w.tag.q1,
 			}
@@ -473,7 +476,8 @@ func (row *Row) loadhelper(win *dumpfile.Window) error {
 		return fmt.Errorf("bad window tag in dump file %q", win.Tag)
 	}
 	w.ClearTag()
-	w.tag.Insert(len(w.tag.file.b), []rune(afterbar[1]), true)
+
+	w.tag.Insert(w.tag.file.Size(), []rune(afterbar[1]), true)
 	w.tag.Show(win.Tag.Q0, win.Tag.Q1, true)
 
 	if win.Type == dumpfile.Unsaved {
@@ -493,14 +497,14 @@ func (row *Row) loadhelper(win *dumpfile.Window) error {
 
 	q0 := win.Body.Q0
 	q1 := win.Body.Q1
-	if q0 > len(w.body.file.b) || q1 > len(w.body.file.b) || q0 > q1 {
+	if q0 > w.body.file.Size() || q1 > w.body.file.Size() || q0 > q1 {
 		q0 = 0
 		q1 = 0
 	}
 	// Update the selection on the Text.
 	w.body.Show(q0, q1, true)
 	ffs := w.body.fr.GetFrameFillStatus()
-	w.maxlines = min(ffs.Nlines, max(w.maxlines, ffs.Nlines))
+	w.maxlines = util.Min(ffs.Nlines, util.Max(w.maxlines, ffs.Nlines))
 
 	// TODO(rjk): Conceivably this should be a zerox xfidlog when reconstituting a zerox?
 	xfidlog(w, "new")

@@ -12,7 +12,8 @@ import (
 	"9fans.net/go/plan9"
 	"9fans.net/go/plan9/client"
 	"9fans.net/go/plumb"
-	"github.com/rjkroege/edwood/internal/runes"
+	"github.com/rjkroege/edwood/runes"
+	"github.com/rjkroege/edwood/util"
 )
 
 var (
@@ -95,7 +96,7 @@ func look3(t *Text, q0 int, q1 int, external bool) {
 		n = q1 - q0
 		if n <= EVENTSIZE {
 			r = make([]rune, n)
-			t.file.b.Read(q0, r)
+			t.file.Read(q0, r)
 			t.w.Eventf("%c%d %d %d %d %v\n", c, q0, q1, f, n, string(r))
 		} else {
 			t.w.Eventf("%c%d %d %d 0 \n", c, q0, q1, f)
@@ -113,12 +114,12 @@ func look3(t *Text, q0 int, q1 int, external bool) {
 			if e.a1 > e.a0 {
 				nlen := len([]rune(e.name))
 				r[nlen] = ':'
-				e.at.file.b.Read(e.a0, r[nlen+1:nlen+1+e.a1-e.a0])
+				e.at.file.Read(e.a0, r[nlen+1:nlen+1+e.a1-e.a0])
 			}
 		} else {
 			n = e.q1 - e.q0
 			r = make([]rune, n)
-			t.file.b.Read(e.q0, r)
+			t.file.Read(e.q0, r)
 		}
 		f &= ^2
 		if n <= EVENTSIZE {
@@ -158,7 +159,7 @@ func look3(t *Text, q0 int, q1 int, external bool) {
 		}
 		n = e.q1 - e.q0
 		r = make([]rune, n)
-		t.file.b.Read(e.q0, r)
+		t.file.Read(e.q0, r)
 		if search(ct, r[:n]) && e.jump {
 			row.display.MoveTo(ct.fr.Ptofchar(getP0(ct.fr)).Add(image.Pt(4, ct.fr.DefaultFontHeight()-4)))
 		}
@@ -204,7 +205,7 @@ func look3Message(t *Text, q0, q1 int) (*plumb.Message, error) {
 		}
 	}
 	r := make([]rune, q1-q0)
-	t.file.b.Read(q0, r[:q1-q0])
+	t.file.Read(q0, r[:q1-q0])
 	m.Data = []byte(string(r[:q1-q0]))
 	return m, nil
 }
@@ -247,10 +248,10 @@ func plumbshow(m *plumb.Message) {
 		name = filepath.Join(m.Dir, name)
 	}
 	name = filepath.Clean(name)
-	r, _, _ := cvttorunes([]byte(name), len(name)) // remove nulls
+	r, _, _ := util.Cvttorunes([]byte(name), len(name)) // remove nulls
 	name = string(r)
 	w.SetName(name)
-	r, _, _ = cvttorunes(m.Data, len(m.Data))
+	r, _, _ = util.Cvttorunes(m.Data, len(m.Data))
 	w.body.Insert(0, r, true)
 	w.body.file.Clean()
 	w.SetTag()
@@ -274,7 +275,7 @@ func search(ct *Text, r []rune) bool {
 		warning(nil, "string too long\n")
 		return false
 	}
-	maxn = max(2*n, RBUFSIZE)
+	maxn = util.Max(2*n, RBUFSIZE)
 	s := make([]rune, RBUFSIZE)
 	bi := 0 // b indexes s
 	nb := 0
@@ -308,10 +309,10 @@ func search(ct *Text, r []rune) bool {
 			if nb >= maxn {
 				nb = maxn - 1
 			}
-			ct.file.b.Read(q, s[:nb])
+			ct.file.Read(q, s[:nb])
 			bi = 0
 		}
-		limit := min(len(s), bi+n)
+		limit := util.Min(len(s), bi+n)
 		if runes.Equal(s[bi:limit], r) {
 			if ct.w != nil {
 				ct.Show(q, q+n, true)
@@ -347,7 +348,7 @@ func isfilec(r rune) bool {
 // Runestr wrapper for cleanname
 func cleanrname(rs []rune) []rune {
 	s := filepath.Clean(string(rs))
-	r, _, _ := cvttorunes([]byte(s), len(s))
+	r, _, _ := util.Cvttorunes([]byte(s), len(s))
 	return r
 }
 
@@ -417,7 +418,7 @@ func expandfile(t *Text, q0 int, q1 int, e *Expand) (success bool) {
 	}
 	// see if it's a file name
 	rb := make([]rune, n)
-	t.file.b.Read(q0, rb[:n])
+	t.file.Read(q0, rb[:n])
 	// first, does it have bad chars?
 	nname := -1
 	for i, c := range rb {
@@ -512,9 +513,13 @@ func lookfile(s string) *Window {
 	s = strings.TrimRight(s, "/")
 	for _, c := range row.col {
 		for _, w := range c.w {
-			k := strings.TrimRight(w.body.file.name, "/")
+			k := strings.TrimRight(w.body.file.Name(), "/")
 			if k == s {
-				w = w.body.file.curtext.w
+				cur, ok := w.body.file.GetCurObserver().(*Text)
+				if !ok {
+					return nil
+				}
+				w = cur.w
 				if w.col != nil { // protect against race deleting w
 					return w
 				}

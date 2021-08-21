@@ -1,4 +1,4 @@
-package main
+package file
 
 import (
 	"bytes"
@@ -6,40 +6,50 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	"github.com/rjkroege/edwood/internal/file"
 )
 
-func TestDelText(t *testing.T) {
-	f := &File{
-		text: []*Text{{}, {}, {}, {}, {}},
+func TestDelObserver(t *testing.T) {
+	f := MakeObservableEditableBufferTag(RuneArray{})
+
+	testData := []*testText{{file: MakeObservableEditableBuffer("World sourdoughs from antiquity", nil)},
+		{file: MakeObservableEditableBuffer("Willowbrook Association Handbook: 2011", nil)},
+		{file: MakeObservableEditableBuffer("Weakest in the Nation", nil)},
 	}
+
 	t.Run("Nonexistent", func(t *testing.T) {
-		err := f.DelText(&Text{})
+		err := f.DelObserver(&testText{
+			file: MakeObservableEditableBuffer("HowToExitVim.txt", nil),
+		})
 		if err == nil {
-			t.Errorf("expected panic when deleting nonexistent text")
+			t.Errorf("expected panic when deleting nonexistent observers")
 		}
 	})
-	for i := len(f.text) - 1; i >= 0; i-- {
-		text := f.text[i]
-		err := f.DelText(text)
+	for _, text := range testData {
+		f.AddObserver(text)
+	}
+	println("Size is now: ", f.GetObserverSize())
+	for i, text := range testData {
+		err := f.DelObserver(text)
 		if err != nil {
-			t.Errorf("DelText of text at index %d failed: %v", i, err)
+			t.Errorf("DelObserver of observers at index %d failed: %v", i, err)
 			continue
 		}
-		if got, want := len(f.text), i; got != want {
-			t.Fatalf("DelText resulted in text of length %v; expected %v", got, want)
+		if got, want := f.GetObserverSize(), len(testData)-(i+1); got != want {
+			println("On test #", i)
+			t.Fatalf("DelObserver resulted in observers of length %v; expected %v", got, want)
 		}
-		for i, t1 := range f.text {
-			if t1 == text {
-				t.Fatalf("DelText did not delete correctly at index %v", i)
+		f.AllObservers(func(i interface{}) {
+			inText := i.(*testText)
+			if inText == text {
+				t.Fatalf("DelObserver did not delete correctly at index %v", i)
 			}
-		}
+
+		})
 	}
 }
 
 func TestFileInsertAtWithoutCommit(t *testing.T) {
-	f := NewFile("edwood")
+	f := MakeObservableEditableBuffer("edwood", nil)
 
 	f.InsertAtWithoutCommit(0, []rune(s1))
 
@@ -63,10 +73,10 @@ const s1 = "hi 海老麺"
 const s2 = "bye"
 
 func TestFileInsertAt(t *testing.T) {
-	f := NewFile("edwood")
+	f := MakeObservableEditableBuffer("edwood", nil)
 
 	// Force Undo.
-	f.seq = 1
+	f.f.seq = 1
 
 	f.InsertAtWithoutCommit(0, []rune(s1))
 
@@ -112,7 +122,7 @@ func readwholefile(t *testing.T, f *File) string {
 }
 
 func TestFileUndoRedo(t *testing.T) {
-	f := NewFile("edwood")
+	f := MakeObservableEditableBuffer("edwood", nil)
 
 	// Validate before.
 	check(t, "TestFileUndoRedo on an empty buffer", f,
@@ -149,7 +159,8 @@ type fileStateSummary struct {
 	filecontents         string
 }
 
-func check(t *testing.T, testname string, f *File, fss *fileStateSummary) {
+func check(t *testing.T, testname string, oeb *ObservableEditableBuffer, fss *fileStateSummary) {
+	f := oeb.f
 	if got, want := f.HasUncommitedChanges(), fss.HasUncommitedChanges; got != want {
 		t.Errorf("%s: HasUncommitedChanges failed. got %v want %v", testname, got, want)
 	}
@@ -168,7 +179,7 @@ func check(t *testing.T, testname string, f *File, fss *fileStateSummary) {
 }
 
 func TestFileUndoRedoWithMark(t *testing.T) {
-	f := NewFile("edwood")
+	f := MakeObservableEditableBuffer("edwood", nil)
 
 	// Force Undo to operate.
 	f.Mark(1)
@@ -194,7 +205,7 @@ func TestFileUndoRedoWithMark(t *testing.T) {
 }
 
 func TestFileLoadNoUndo(t *testing.T) {
-	f := NewFile("edwood")
+	f := MakeObservableEditableBuffer("edwood", nil)
 
 	// Insert some pre-existing content.
 	f.InsertAt(0, []rune(s1))
@@ -222,10 +233,10 @@ func TestFileLoadNoUndo(t *testing.T) {
 
 func TestFileLoadUndoHash(t *testing.T) {
 	hashOfS2nS2 :=
-		file.Hash{0xf0, 0x21, 0xb5, 0x73, 0x6a, 0xb5, 0x21, 0x6d, 0x29, 0x1b, 0x19, 0xfb, 0xe, 0xa8, 0x53, 0x4a, 0x59, 0x7e, 0xb3, 0xfa}
+		Hash{0xf0, 0x21, 0xb5, 0x73, 0x6a, 0xb5, 0x21, 0x6d, 0x29, 0x1b, 0x19, 0xfb, 0xe, 0xa8, 0x53, 0x4a, 0x59, 0x7e, 0xb3, 0xfa}
 
-	f := NewFile("edwood")
-	if got, want := f.name, "edwood"; got != want {
+	f := MakeObservableEditableBuffer("edwood", nil)
+	if got, want := f.Name(), "edwood"; got != want {
 		t.Errorf("TestFileLoadUndoHash bad initial name. got %v want %v", got, want)
 	}
 
@@ -235,7 +246,7 @@ func TestFileLoadUndoHash(t *testing.T) {
 	// f.Load marks the file as modified.
 	f.Clean()
 
-	if got, want := f.hash, hashOfS2nS2; !got.Eq(want) {
+	if got, want := f.Hash(), hashOfS2nS2; !got.Eq(want) {
 		t.Errorf("TestFileLoadUndoHash bad initial name. got %#v want %#v", got, want)
 	}
 
@@ -252,12 +263,12 @@ func TestFileLoadUndoHash(t *testing.T) {
 		&fileStateSummary{false, false, false, true, s2 + s2})
 
 	// SaveableAndDirty should return true if the File is plausibly writable
-	// to f.name and has changes that might require writing it out.
+	// to f.details.Name and has changes that might require writing it out.
 	f.SetName("plan9")
 	check(t, "TestFileLoadUndoHash after SetName", f,
 		&fileStateSummary{false, true, false, true, s2 + s2})
 
-	if got, want := f.name, "plan9"; got != want {
+	if got, want := f.Name(), "plan9"; got != want {
 		t.Errorf("TestFileLoadUndoHash failed to set name. got %v want %v", got, want)
 	}
 
@@ -265,14 +276,14 @@ func TestFileLoadUndoHash(t *testing.T) {
 	f.Undo(true)
 	check(t, "TestFileLoadUndoHash after Undo", f,
 		&fileStateSummary{false, false, true, false, s2 + s2})
-	if got, want := f.name, "edwood"; got != want {
+	if got, want := f.Name(), "edwood"; got != want {
 		t.Errorf("TestFileLoadUndoHash failed to set name. got %v want %v", got, want)
 	}
 }
 
 // Multiple interleaved actions do the right thing.
 func TestFileInsertDeleteUndo(t *testing.T) {
-	f := NewFile("edwood")
+	f := MakeObservableEditableBuffer("edwood", nil)
 
 	// Empty File is an Undo point and considered clean.
 	f.Mark(1)
@@ -307,7 +318,7 @@ func TestFileInsertDeleteUndo(t *testing.T) {
 }
 
 func TestFileRedoSeq(t *testing.T) {
-	f := NewFile("edwood")
+	f := MakeObservableEditableBuffer("edwood", nil)
 	// Empty File is an Undo point and considered clean
 
 	f.Mark(1)
@@ -348,30 +359,31 @@ func TestFileUpdateInfo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat failed: %v", err)
 	}
-	f := NewFile(filename)
-	f.hash = file.EmptyHash
-	f.info = nil
-	f.UpdateInfo(filename, d)
-	if f.info != nil {
-		t.Errorf("File info is %v; want nil", f.info)
+	f := MakeObservableEditableBuffer(filename, nil).f
+	f.oeb.SetHash(EmptyHash)
+	f.oeb.SetInfo(nil)
+
+	f.oeb.UpdateInfo(filename, d)
+	if f.oeb.Info() != nil {
+		t.Errorf("File info is %v; want nil", f.oeb.Info())
 	}
 
-	h, err := file.HashFor(filename)
+	h, err := HashFor(filename)
 	if err != nil {
 		t.Fatalf("HashFor(%v) failed: %v", filename, err)
 	}
-	f.hash = h
-	f.info = nil
-	f.UpdateInfo(filename, d)
-	if f.info != d {
-		t.Errorf("File info is %v; want %v", f.info, d)
+	f.oeb.SetHash(h)
+	f.oeb.SetInfo(nil)
+	f.oeb.UpdateInfo(filename, d)
+	if f.oeb.Info() != d {
+		t.Errorf("File info is %v; want %v", f.oeb.Info(), d)
 	}
 }
 
 func TestFileUpdateInfoError(t *testing.T) {
 	filename := "/non-existent-file"
-	f := NewFile(filename)
-	err := f.UpdateInfo(filename, nil)
+	f := MakeObservableEditableBuffer(filename, nil).f
+	err := f.oeb.UpdateInfo(filename, nil)
 	want := "failed to compute hash for"
 	if err == nil || !strings.HasPrefix(err.Error(), want) {
 		t.Errorf("File.UpdateInfo returned error %q; want prefix %q", err, want)
@@ -379,10 +391,10 @@ func TestFileUpdateInfoError(t *testing.T) {
 }
 
 func TestFileNameSettingWithScratch(t *testing.T) {
-	f := NewFile("edwood")
+	f := MakeObservableEditableBuffer("edwood", nil)
 	// Empty File is an Undo point and considered clean
 
-	if got, want := f.name, "edwood"; got != want {
+	if got, want := f.Name(), "edwood"; got != want {
 		t.Errorf("TestFileNameSettingWithScratch failed to init name. got %v want %v", got, want)
 	}
 	if got, want := f.isscratch, false; got != want {
@@ -395,7 +407,7 @@ func TestFileNameSettingWithScratch(t *testing.T) {
 	f.Mark(2)
 	f.SetName("/hello/+Errors")
 
-	if got, want := f.name, "/hello/+Errors"; got != want {
+	if got, want := f.Name(), "/hello/+Errors"; got != want {
 		t.Errorf("TestFileNameSettingWithScratch failed to init name. got %v want %v", got, want)
 	}
 	if got, want := f.isscratch, true; got != want {
@@ -404,7 +416,7 @@ func TestFileNameSettingWithScratch(t *testing.T) {
 
 	f.Undo(true)
 
-	if got, want := f.name, "/guide"; got != want {
+	if got, want := f.Name(), "/guide"; got != want {
 		t.Errorf("TestFileNameSettingWithScratch failed to init name. got %v want %v", got, want)
 	}
 	if got, want := f.isscratch, true; got != want {
@@ -412,10 +424,21 @@ func TestFileNameSettingWithScratch(t *testing.T) {
 	}
 
 	f.Undo(true)
-	if got, want := f.name, "edwood"; got != want {
+	if got, want := f.Name(), "edwood"; got != want {
 		t.Errorf("TestFileNameSettingWithScratch failed to init name. got %v want %v", got, want)
 	}
 	if got, want := f.isscratch, false; got != want {
 		t.Errorf("TestFileNameSettingWithScratch failed to init isscratch. got %v want %v", got, want)
 	}
 }
+
+type testText struct {
+	file *ObservableEditableBuffer
+	b    RuneArray
+}
+
+// Inserted is implemented to satisfy the BufferObserver interface
+func (t testText) Inserted(q0 int, r []rune) {}
+
+// Deleted is implemented to satisfy the BufferObserver interface
+func (t testText) Deleted(q0, q1 int) {}

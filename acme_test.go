@@ -3,12 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/rjkroege/edwood/file"
 	"os/exec"
 	"reflect"
 	"testing"
 	"time"
 
-	"github.com/rjkroege/edwood/internal/edwoodtest"
+	"github.com/rjkroege/edwood/edwoodtest"
 )
 
 func TestIsmtpt(t *testing.T) {
@@ -213,7 +214,7 @@ func startMockWaitthread(ctx context.Context) (done <-chan struct{}) {
 	row = Row{
 		display: edwoodtest.NewDisplay(),
 		tag: Text{
-			file: NewFile(""),
+			file: file.MakeObservableEditableBuffer("", nil),
 		},
 	}
 	ch := make(chan struct{})

@@ -8,9 +8,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/rjkroege/edwood/internal/draw"
-	"github.com/rjkroege/edwood/internal/dumpfile"
-	"github.com/rjkroege/edwood/internal/frame"
+	"github.com/rjkroege/edwood/draw"
+	"github.com/rjkroege/edwood/dumpfile"
+	"github.com/rjkroege/edwood/frame"
 )
 
 type teststimulus struct {
@@ -126,6 +126,9 @@ func TestEdit(t *testing.T) {
 		warningsMu.Lock()
 		if got, want := len(warnings), len(test.expectedwarns); got != want {
 			t.Errorf("text %d: expected %d warnings but got %d warnings", i, want, got)
+			for i := range warnings {
+				t.Errorf("Warning #%d received: %s\n", i, warnings[i].buf.String())
+			}
 			break
 		}
 
@@ -316,7 +319,7 @@ func TestEditMultipleWindows(t *testing.T) {
 		}, []string{"Edit: no file name given\n"}},
 
 		// b does the same thing in Acme and Edwood (fails)
-		// Maybe this sets curtext?
+		// Maybe this sets currobserver?
 
 		// w
 		// backing file is newer than file.

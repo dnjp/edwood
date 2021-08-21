@@ -12,11 +12,13 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/rjkroege/edwood/internal/complete"
-	"github.com/rjkroege/edwood/internal/draw"
-	"github.com/rjkroege/edwood/internal/draw/drawutil"
-	"github.com/rjkroege/edwood/internal/frame"
-	"github.com/rjkroege/edwood/internal/runes"
+	"github.com/rjkroege/edwood/complete"
+	"github.com/rjkroege/edwood/draw"
+	"github.com/rjkroege/edwood/draw/drawutil"
+	"github.com/rjkroege/edwood/file"
+	"github.com/rjkroege/edwood/frame"
+	"github.com/rjkroege/edwood/runes"
+	"github.com/rjkroege/edwood/util"
 )
 
 const (
@@ -41,6 +43,8 @@ var (
 		left2,
 		left3,
 	}
+
+	_ file.BufferObserver = (*Text)(nil) // Enforce at compile time that Text implements BufferObserver
 )
 
 type TextKind byte
@@ -56,7 +60,7 @@ const (
 // Files have possible multiple texts corresponding to clones.
 type Text struct {
 	display draw.Display
-	file    *File
+	file    *file.ObservableEditableBuffer
 	fr      frame.Frame
 	font    string
 
@@ -135,7 +139,7 @@ func (t *Text) Redraw(r image.Rectangle, odx int, noredraw bool) {
 	maxt := int(maxtab)
 	if t.what == Body {
 		if t.file.IsDir() {
-			maxt = min(TABDIR, int(maxtab))
+			maxt = util.Min(TABDIR, int(maxtab))
 		} else {
 			maxt = t.tabstop
 		}
@@ -187,8 +191,8 @@ func (t *Text) Resize(r image.Rectangle, keepextra, noredraw bool) int {
 
 func (t *Text) Close() {
 	t.fr.Clear(true)
-	if err := t.file.DelText(t); err != nil {
-		acmeerror(err.Error(), nil)
+	if err := t.file.DelObserver(t); err != nil {
+		util.AcmeError(err.Error(), nil)
 	}
 	t.file = nil
 	if argtext == t {
@@ -210,17 +214,17 @@ func (t *Text) Close() {
 
 func (t *Text) Columnate(names []string, widths []int) {
 	var colw, mint, maxt, ncol, nrow int
-	q1 := (0)
+	q1 := 0
 	Lnl := []rune("\n")
 	Ltab := []rune("\t")
 
-	if t.file.HasMultipleTexts() {
+	if t.file.HasMultipleObservers() {
 		panic("Text.Columnate is only for directories that can't have zerox")
 	}
 
 	mint = t.getfont().StringWidth("0")
 	// go for narrower tabs if set more than 3 wide
-	t.fr.Maxtab(min(int(maxtab), TABDIR) * mint)
+	t.fr.Maxtab(util.Min(int(maxtab), TABDIR) * mint)
 	maxt = t.fr.GetMaxtab()
 	for _, w := range widths {
 		if maxt-w%maxt < mint || w%maxt == 0 {
@@ -236,7 +240,7 @@ func (t *Text) Columnate(names []string, widths []int) {
 	if colw == 0 {
 		ncol = 1
 	} else {
-		ncol = max(1, t.fr.Rect().Dx()/colw)
+		ncol = util.Max(1, t.fr.Rect().Dx()/colw)
 	}
 	nrow = (len(names) + ncol - 1) / ncol
 
@@ -274,7 +278,7 @@ func (t *Text) checkSafeToLoad(filename string) error {
 		panic("text.load")
 	}
 
-	if t.file.IsDir() && t.file.name == "" {
+	if t.file.IsDir() && t.file.Name() == "" {
 		return warnError(nil, "empty directory name")
 	}
 	if ismtpt(filename) {
@@ -320,19 +324,19 @@ func (t *Text) Load(q0 int, filename string, setqid bool) (nread int, err error)
 		return 0, warnError(nil, "can't fstat %s: %v", filename, err)
 	}
 	if setqid {
-		t.file.info = d
+		t.file.SetInfo(d)
 	}
 
 	if d.IsDir() {
 		// this is checked in get() but it's possible the file changed underfoot
-		if t.file.HasMultipleTexts() {
+		if t.file.HasMultipleObservers() {
 			return 0, warnError(nil, "%s is a directory; can't read with multiple windows on it", filename)
 		}
 		t.file.SetDir(true)
 		t.w.filemenu = false
-		if len(t.file.name) > 0 && !strings.HasSuffix(t.file.name, string(filepath.Separator)) {
-			t.file.name = t.file.name + string(filepath.Separator)
-			t.w.SetName(t.file.name)
+		if len(t.file.Name()) > 0 && !strings.HasSuffix(t.file.Name(), string(filepath.Separator)) {
+			t.file.SetName(t.file.Name() + string(filepath.Separator))
+			t.w.SetName(t.file.Name())
 		}
 		dirNames, err := getDirNames(fd)
 		if err != nil {
@@ -419,7 +423,7 @@ func (t *Text) BsInsert(q0 int, r []rune, tofile bool) (q, nr int) {
 // inserted is a callback invoked by File on Insert* to update each Text
 // that is using a given File.
 func (t *Text) inserted(q0 int, r []rune) {
-	if t.eq0 == ^0 {
+	if t.eq0 == -1 {
 		t.eq0 = q0
 	}
 	if t.what == Body {
@@ -526,7 +530,7 @@ func (t *Text) fill(fr frame.SelectScrollUpdater) error {
 			n = 2000
 		}
 		rp := make([]rune, n)
-		t.file.b.Read(t.org+fr.GetFrameFillStatus().Nchars, rp)
+		t.file.Read(t.org+fr.GetFrameFillStatus().Nchars, rp)
 		//
 		// it's expensive to frinsert more than we need, so
 		// count newlines.
@@ -568,26 +572,26 @@ func (t *Text) Delete(q0, q1 int, _ bool) {
 // deleted implements the single-text deletion observer for this Text's
 // backing File. It updates the Text (i.e. the view) for the removal of
 // runes [q0, q1).
-func (t *Text) deleted(q0, q1 int) {
+func (t *Text) Deleted(q0, q1 int) {
 	n := q1 - q0
 	if t.what == Body {
 		t.w.utflastqid = -1
 	}
 	if q0 < t.iq1 {
-		t.iq1 -= min(n, t.iq1-q0)
+		t.iq1 -= util.Min(n, t.iq1-q0)
 	}
 	if q0 < t.q0 {
-		t.q0 -= min(n, t.q0-q0)
+		t.q0 -= util.Min(n, t.q0-q0)
 	}
 	if q0 < t.q1 {
-		t.q1 -= min(n, t.q1-q0)
+		t.q1 -= util.Min(n, t.q1-q0)
 	}
 	if q1 <= t.org {
 		t.org -= n
 	} else if t.fr != nil && q0 < t.org+(t.fr.GetFrameFillStatus().Nchars) {
 		p1 := q1 - t.org
 		if p1 > (t.fr.GetFrameFillStatus().Nchars) {
-			p1 = (t.fr.GetFrameFillStatus().Nchars)
+			p1 = t.fr.GetFrameFillStatus().Nchars
 		}
 		p0 := 0
 		if q0 < t.org {
@@ -596,7 +600,7 @@ func (t *Text) deleted(q0, q1 int) {
 		} else {
 			p0 = q0 - t.org
 		}
-		t.fr.Delete((p0), (p1))
+		t.fr.Delete(p0, p1)
 		t.fill(t.fr)
 	}
 
@@ -619,16 +623,16 @@ func (t *Text) logInsertDelete(q0, q1 int) {
 	}
 }
 
-func (t *Text) View(q0, q1 int) []rune                   { return t.file.b.View(q0, q1) }
-func (t *Text) ReadB(q int, r []rune) (n int, err error) { n, err = t.file.b.Read(q, r); return }
+func (t *Text) View(q0, q1 int) []rune                   { return t.file.View(q0, q1) }
+func (t *Text) ReadB(q int, r []rune) (n int, err error) { n, err = t.file.Read(q, r); return }
 func (t *Text) nc() int                                  { return t.file.Size() }
 func (t *Text) Q0() int                                  { return t.q0 }
 func (t *Text) Q1() int                                  { return t.q1 }
 func (t *Text) SetQ0(q0 int)                             { t.q0 = q0 }
 func (t *Text) SetQ1(q1 int)                             { t.q1 = q1 }
 func (t *Text) Constrain(q0, q1 int) (p0, p1 int) {
-	p0 = min(q0, t.file.Size())
-	p1 = min(q1, t.file.Size())
+	p0 = util.Min(q0, t.file.Size())
+	p1 = util.Min(q1, t.file.Size())
 	return p0, p1
 }
 
@@ -928,7 +932,7 @@ func (t *Text) Type(r rune) {
 	wasrange := t.q0 != t.q1
 	if t.q1 > t.q0 {
 		if t.file.HasUncommitedChanges() {
-			acmeerror("text.type", nil)
+			util.AcmeError("text.type", nil)
 		}
 		cut(t, t, nil, true, true, "")
 		t.eq0 = ^0
@@ -994,7 +998,7 @@ func (t *Text) Type(r rune) {
 		t.file.Commit()
 		t.Delete(q0, q0+nnb, true)
 
-		// Run through the code that will update the t.w.body.file.name.
+		// Run through the code that will update the t.w.body.file.details.Name.
 		t.TypeCommit()
 
 		t.iq1 = t.q0
@@ -1055,7 +1059,7 @@ func (t *Text) FrameScroll(fr frame.SelectScrollUpdater, dl int) {
 	}
 	var q0 int
 	if dl < 0 {
-		q0 = t.BackNL(t.org, (-dl))
+		q0 = t.BackNL(t.org, -dl)
 	} else {
 		if t.org+(fr.GetFrameFillStatus().Nchars) == t.file.Size() {
 			return
@@ -1104,7 +1108,7 @@ func (t *Text) Select() {
 		// TODO(rjk): Ack. This is horrible? Layering violation?
 		for {
 			mousectl.Read()
-			if !(mouse.Buttons == b && abs(mouse.Point.X-x) < 3 && abs(mouse.Point.Y-y) < 3) {
+			if !(mouse.Buttons == b && util.Abs(mouse.Point.X-x) < 3 && util.Abs(mouse.Point.Y-y) < 3) {
 				break
 			}
 		}
@@ -1274,10 +1278,10 @@ func (t *Text) SetSelect(q0, q1 int) {
 	}
 	if p0 > (t.fr.GetFrameFillStatus().Nchars) {
 		ticked = false
-		p0 = (t.fr.GetFrameFillStatus().Nchars)
+		p0 = t.fr.GetFrameFillStatus().Nchars
 	}
 	if p1 > (t.fr.GetFrameFillStatus().Nchars) {
-		p1 = (t.fr.GetFrameFillStatus().Nchars)
+		p1 = t.fr.GetFrameFillStatus().Nchars
 	}
 	if p0 > p1 {
 		panic(fmt.Sprintf("acme: textsetselect p0=%d p1=%d q0=%v q1=%v t.org=%d nchars=%d", p0, p1, q0, q1, t.org, t.fr.GetFrameFillStatus().Nchars))
@@ -1387,12 +1391,12 @@ func (t *Text) ClickMatch(cl, cr rune, dir int, inq int) (q int, r bool) {
 				break
 			}
 			c = t.file.ReadC(inq)
-			(inq)++
+			inq++
 		} else {
 			if inq == 0 {
 				break
 			}
-			(inq)--
+			inq--
 			c = t.file.ReadC(inq)
 		}
 		if c == cr {
@@ -1574,7 +1578,7 @@ func (t *Text) setorigin(fr frame.SelectScrollUpdater, org int, exact bool, call
 		if a < 0 && -a < fr.GetFrameFillStatus().Nchars {
 			n = t.org - org
 			r = make([]rune, n)
-			t.file.b.Read(org, r)
+			t.file.Read(org, r)
 			fr.Insert(r, 0)
 		} else {
 			fr.Delete(0, fr.GetFrameFillStatus().Nchars)
@@ -1596,7 +1600,7 @@ func (t *Text) Reset() {
 	t.q0 = 0
 	t.q1 = 0
 	t.file.Reset()
-	t.file.b.Reset()
+	t.file.ResetBuffer()
 }
 
 func (t *Text) dirName(name string) string {

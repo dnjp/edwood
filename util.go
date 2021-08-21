@@ -3,44 +3,14 @@ package main
 import (
 	"fmt"
 	"image"
-	"log"
 	"path/filepath"
 	"strings"
 	"sync"
-	"unicode/utf8"
 
-	"github.com/rjkroege/edwood/internal/runes"
+	"github.com/rjkroege/edwood/file"
+	"github.com/rjkroege/edwood/runes"
+	"github.com/rjkroege/edwood/util"
 )
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-func minu(a, b uint) uint {
-	if a < b {
-		return a
-	}
-	return b
-}
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func abs(x int) int {
-	if x < 0 {
-		return -x
-	}
-	return x
-}
-
-func acmeerror(s string, err error) {
-	log.Panicf("acme: %s: %v\n", s, err)
-}
 
 var (
 	prevmouse image.Point
@@ -66,7 +36,7 @@ func restoremouse(w *Window) bool {
 }
 
 func bytetorune(s []byte) []rune {
-	r, _, _ := cvttorunes(s, len(s))
+	r, _, _ := util.Cvttorunes(s, len(s))
 	return r
 }
 
@@ -87,35 +57,6 @@ func isalnum(c rune) bool {
 	return true
 }
 
-// Cvttorunes decodes runes r from p. It's guaranteed that first n
-// bytes of p will be interpreted without worrying about partial runes.
-// This may mean reading up to UTFMax-1 more bytes than n; the caller
-// must ensure p is large enough. Partial runes and invalid encodings
-// are converted to RuneError. Nb (always >= n) is the number of bytes
-// interpreted.
-//
-// If any U+0000 rune is present in r, they are elided and nulls is set
-// to true.
-func cvttorunes(p []byte, n int) (r []rune, nb int, nulls bool) {
-	for nb < n {
-		var w int
-		var ru rune
-		if p[nb] < utf8.RuneSelf {
-			w = 1
-			ru = rune(p[nb])
-		} else {
-			ru, w = utf8.DecodeRune(p[nb:])
-		}
-		if ru != 0 {
-			r = append(r, ru)
-		} else {
-			nulls = true
-		}
-		nb += w
-	}
-	return
-}
-
 func errorwin1Name(dir string) string {
 	return filepath.Join(dir, "+Errors")
 }
@@ -126,7 +67,7 @@ func errorwin1(dir string, incl []string) *Window {
 	if w == nil {
 		if len(row.col) == 0 {
 			if row.Add(nil, -1) == nil {
-				acmeerror("can't create column to make error window", nil)
+				util.AcmeError("can't create column to make error window", nil)
 			}
 		}
 		w = row.col[len(row.col)-1].Add(nil, nil, -1)
@@ -205,7 +146,7 @@ func makenewwindow(t *Text) *Window {
 		c = t.col
 	default:
 		if len(row.col) == 0 && row.Add(nil, -1) == nil {
-			acmeerror("can't make column", nil)
+			util.AcmeError("can't make column", nil)
 		}
 		c = row.col[len(row.col)-1]
 	}
@@ -248,7 +189,7 @@ func makenewwindow(t *Text) *Window {
 
 type Warning struct {
 	md  *MntDir
-	buf RuneArray
+	buf file.RuneArray
 }
 
 var warnings = []*Warning{}
@@ -277,9 +218,9 @@ func flushwarnings() {
 		// place), to avoid a big memory footprint.
 		q0 = t.Nc()
 		r := make([]rune, RBUFSIZE)
-		// TODO(rjk): Figure out why Warning doesn't use a File.
-		for n = 0; n < warn.buf.nc(); n += nr {
-			nr = warn.buf.nc() - n
+		// TODO(rjk): Figure out why Warning doesn't use an file.ObservableEditableBuffer.
+		for n = 0; n < warn.buf.Nc(); n += nr {
+			nr = warn.buf.Nc() - n
 			if nr > RBUFSIZE {
 				nr = RBUFSIZE
 			}
@@ -317,7 +258,7 @@ func addwarningtext(md *MntDir, r []rune) {
 
 	for _, warn := range warnings {
 		if warn.md == md {
-			warn.buf.Insert(warn.buf.nc(), r)
+			warn.buf.Insert(warn.buf.Nc(), r)
 			return
 		}
 	}

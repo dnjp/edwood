@@ -4,12 +4,13 @@ package main
 // row/column/window model.
 
 import (
+	"github.com/rjkroege/edwood/file"
 	"image"
 	"strings"
 
-	"github.com/rjkroege/edwood/internal/draw"
-	"github.com/rjkroege/edwood/internal/dumpfile"
-	"github.com/rjkroege/edwood/internal/edwoodtest"
+	"github.com/rjkroege/edwood/draw"
+	"github.com/rjkroege/edwood/dumpfile"
+	"github.com/rjkroege/edwood/edwoodtest"
 )
 
 // configureGlobals setups global variables so that Edwood can operate on
@@ -50,7 +51,7 @@ func MakeWindowScaffold(content *dumpfile.Content) {
 		display: display,
 		tag: *updateText(&Text{
 			what: Rowtag,
-			file: NewTagFile(),
+			file: file.MakeObservableEditableBufferTag(nil),
 		}, &content.RowTag, display),
 	}
 
@@ -59,7 +60,7 @@ func MakeWindowScaffold(content *dumpfile.Content) {
 		col := &Column{
 			tag: *updateText(&Text{
 				what: Columntag,
-				file: NewTagFile(),
+				file: file.MakeObservableEditableBufferTag(nil),
 			}, &sercol.Tag, display),
 			display: display,
 			fortest: true,

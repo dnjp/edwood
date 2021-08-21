@@ -8,8 +8,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/rjkroege/edwood/internal/draw"
-	"github.com/rjkroege/edwood/internal/frame"
+	"github.com/rjkroege/edwood/draw"
+	"github.com/rjkroege/edwood/file"
+	"github.com/rjkroege/edwood/frame"
+	"github.com/rjkroege/edwood/runes"
+	"github.com/rjkroege/edwood/util"
 )
 
 type Window struct {
@@ -79,18 +82,18 @@ func (w *Window) initHeadless(clone *Window) *Window {
 	w.ctlfid = MaxFid
 	w.utflastqid = -1
 
-	f := NewTagFile()
-	f.AddText(&w.tag)
+	f := file.MakeObservableEditableBufferTag(nil)
+	f.AddObserver(&w.tag)
 	w.tag.file = f
 
 	// Body setup.
-	f = NewFile("")
+	f = file.MakeObservableEditableBuffer("", nil)
 	if clone != nil {
 		f = clone.body.file
 		w.body.org = clone.body.org
 	}
-	w.body.file = f.AddText(&w.body)
-
+	f.AddObserver(&w.body)
+	w.body.file = f
 	w.filemenu = true
 	w.autoindent = *globalAutoIndent
 
@@ -116,9 +119,11 @@ func (w *Window) Init(clone *Window, r image.Rectangle, dis draw.Display) {
 	// tag is a copy of the contents, not a tracked image
 	if clone != nil {
 		w.tag.Delete(0, w.tag.Nc(), true)
-		w.tag.Insert(0, clone.tag.file.b, true)
+		// TODO(sn0w): find a nicer way to do this.
+		clonebuff := []rune(clone.tag.file.String())
+		w.tag.Insert(0, clonebuff, true)
 		w.tag.file.Reset()
-		w.tag.SetSelect(len(w.tag.file.b), len(w.tag.file.b))
+		w.tag.SetSelect(w.tag.file.Nbyte(), w.tag.file.Nbyte())
 	}
 	r1 = r
 	r1.Min.Y += w.taglines*fontget(tagfont, w.display).Height() + 1
@@ -214,7 +219,7 @@ func (w *Window) TagLines(r image.Rectangle) int {
 	// if tag ends with \n, include empty line at end for typing
 	n := w.tag.fr.GetFrameFillStatus().Nlines
 	if w.tag.file.Size() > 0 {
-		c := w.tag.file.b.ReadC(w.tag.file.Size() - 1)
+		c := w.tag.file.ReadC(w.tag.file.Size() - 1)
 		if c == '\n' {
 			n++
 		}
@@ -243,12 +248,12 @@ func (w *Window) Resize(r image.Rectangle, safe, keepextra bool) int {
 	w.tagtop.Max.Y = r.Min.Y + fontget(tagfont, w.display).Height()
 
 	r1 := r
-	r1.Max.Y = min(r.Max.Y, r1.Min.Y+w.taglines*fontget(tagfont, w.display).Height())
+	r1.Max.Y = util.Min(r.Max.Y, r1.Min.Y+w.taglines*fontget(tagfont, w.display).Height())
 
 	// If needed, recompute number of lines in tag.
 	if !safe || !w.tagsafe || !w.tag.all.Eq(r1) {
 		w.taglines = w.TagLines(r)
-		r1.Max.Y = min(r.Max.Y, r1.Min.Y+w.taglines*fontget(tagfont, w.display).Height())
+		r1.Max.Y = util.Min(r.Max.Y, r1.Min.Y+w.taglines*fontget(tagfont, w.display).Height())
 	}
 
 	// Resize/redraw tag TODO(flux)
@@ -288,7 +293,7 @@ func (w *Window) Resize(r image.Rectangle, safe, keepextra bool) int {
 				w.display.ScreenImage().Draw(r1, tagcolors[frame.ColBord], nil, image.Point{})
 			}
 			y++
-			r1.Min.Y = min(y, r.Max.Y)
+			r1.Min.Y = util.Min(y, r.Max.Y)
 			r1.Max.Y = r.Max.Y
 		} else {
 			r1.Min.Y = y
@@ -300,7 +305,7 @@ func (w *Window) Resize(r image.Rectangle, safe, keepextra bool) int {
 		w.body.ScrDraw(w.body.fr.GetFrameFillStatus().Nchars)
 		w.body.all.Min.Y = oy
 	}
-	w.maxlines = min(w.body.fr.GetFrameFillStatus().Nlines, max(w.maxlines, w.body.fr.GetFrameFillStatus().Maxlines))
+	w.maxlines = util.Min(w.body.fr.GetFrameFillStatus().Nlines, util.Max(w.maxlines, w.body.fr.GetFrameFillStatus().Maxlines))
 	// TODO(rjk): this value doesn't make sense when we've collapsed
 	// the tag if the rectangle update block is not executed.
 	return w.r.Max.Y
@@ -320,7 +325,8 @@ func (w *Window) Lock(owner int) {
 	w.ref.Inc()
 	w.owner = owner
 	f := w.body.file
-	f.AllText(func(t *Text) {
+	f.AllObservers(func(i interface{}) {
+		t := i.(*Text)
 		if t.w != w {
 			t.w.lock1(owner)
 		}
@@ -336,7 +342,8 @@ func (w *Window) unlock1() {
 
 // Unlock releases the lock on each clone of w
 func (w *Window) Unlock() {
-	w.body.file.AllText(func(t *Text) {
+	w.body.file.AllObservers(func(i interface{}) {
+		t := i.(*Text)
 		if t.w != w {
 			t.w.unlock1()
 		}
@@ -407,7 +414,7 @@ func (w *Window) ClearTag() {
 	// w must be committed
 	n := w.tag.Nc()
 	r := make([]rune, n)
-	w.tag.file.b.Read(0, r)
+	w.tag.file.Read(0, r)
 	i := len([]rune(w.ParseTag()))
 	for ; i < n; i++ {
 		if r[i] == '|' {
@@ -432,7 +439,7 @@ func (w *Window) ClearTag() {
 // ParseTag returns the filename in the window tag.
 func (w *Window) ParseTag() string {
 	r := make([]rune, w.tag.Nc())
-	w.tag.file.b.Read(0, r)
+	w.tag.file.Read(0, r)
 	tag := string(r)
 
 	// " |" or "\t|" ends left half of tag
@@ -454,7 +461,8 @@ func (w *Window) ParseTag() string {
 // SetTag updates the tag for this Window and all of its clones.
 func (w *Window) SetTag() {
 	f := w.body.file
-	f.AllText(func(u *Text) {
+	f.AllObservers(func(i interface{}) {
+		u := i.(*Text)
 		if u.w.col.safe || u.fr.GetFrameFillStatus().Maxlines > 0 {
 			u.w.setTag1()
 		}
@@ -480,7 +488,7 @@ func (w *Window) setTag1() {
 	// and put up with the traffic implied for a tag line.
 
 	var sb strings.Builder
-	sb.WriteString(w.body.file.name)
+	sb.WriteString(w.body.file.Name())
 	sb.WriteString(Ldelsnarf)
 
 	if w.filemenu {
@@ -497,8 +505,8 @@ func (w *Window) setTag1() {
 	if w.body.file.IsDir() {
 		sb.WriteString(Lget)
 	}
-	old := w.tag.file.b
-	oldbarIndex := w.tag.file.b.IndexRune('|')
+	old := w.tag.file.View(0, w.tag.file.Nbyte()) // TODO(sn0w) find another way to do this without using View.
+	oldbarIndex := w.tag.file.IndexRune('|')
 	if oldbarIndex >= 0 {
 		sb.WriteString(" ")
 		sb.WriteString(string(old[oldbarIndex:]))
@@ -509,14 +517,14 @@ func (w *Window) setTag1() {
 		sb.WriteString(" ")
 	}
 
-	new := RuneArray([]rune(sb.String()))
+	new := []rune(sb.String())
 
 	// replace tag if the new one is different
 	resize := false
-	if !new.Equal(w.tag.file.b) {
+	if !runes.Equal(new, []rune(w.tag.file.String())) {
 		resize = true // Might need to resize the tag
 		// try to preserve user selection
-		newbarIndex := new.IndexRune('|') // New always has '|'
+		newbarIndex := runes.IndexRune(new, '|') // New always has '|'
 		q0 := w.tag.q0
 		q1 := w.tag.q1
 
@@ -525,8 +533,8 @@ func (w *Window) setTag1() {
 		w.tag.Insert(0, new, true)
 
 		// Rationalize the selection as best as possible
-		w.tag.q0 = min(q0, w.tag.Nc())
-		w.tag.q1 = min(q1, w.tag.Nc())
+		w.tag.q0 = util.Min(q0, w.tag.Nc())
+		w.tag.q1 = util.Min(q1, w.tag.Nc())
 		if oldbarIndex != -1 && q0 > oldbarIndex {
 			bar := newbarIndex - oldbarIndex
 			w.tag.q0 = q0 + bar
@@ -559,7 +567,7 @@ func (w *Window) Commit(t *Text) {
 		return
 	}
 	filename := w.ParseTag()
-	if filename != w.body.file.name {
+	if filename != w.body.file.Name() {
 		seq++
 		w.body.file.Mark(seq)
 		w.body.file.Modded()
@@ -617,8 +625,8 @@ func (w *Window) Clean(conservative bool) bool {
 		return true
 	}
 	if w.body.file.TreatAsDirty() {
-		if len(w.body.file.name) != 0 {
-			warning(nil, "%v modified\n", w.body.file.name)
+		if len(w.body.file.Name()) != 0 {
+			warning(nil, "%v modified\n", w.body.file.Name())
 		} else {
 			if w.body.Nc() < 100 { // don't whine if it's too small
 				return true
@@ -661,7 +669,7 @@ func (w *Window) Eventf(format string, args ...interface{}) {
 		return
 	}
 	if w.owner == 0 {
-		acmeerror("no window owner", nil)
+		util.AcmeError("no window owner", nil)
 	}
 	b := []byte(fmt.Sprintf(format, args...))
 	w.events = append(w.events, byte(w.owner))

@@ -1,27 +1,27 @@
 package main
 
 import (
+	"github.com/rjkroege/edwood/file"
 	"testing"
 )
 
 // Test for https://github.com/rjkroege/edwood/issues/291
-func TestXCmdPipeMultipleWindows(t *testing.T) {
+// {gh issue view 291}
+func DISABLED_TestXCmdPipeMultipleWindows(t *testing.T) {
 	cedit = make(chan int)
 	ccommand = make(chan *Command)
 	cwait = make(chan ProcessState)
 
 	newWindow := func(name string) *Window {
 		w := NewWindow()
-		w.body.file = NewFile(name)
+		w.body.file = file.MakeObservableEditableBuffer(name, nil)
 		w.body.w = w
 		w.body.fr = &MockFrame{}
-		w.body.file.text = []*Text{&w.body}
-		w.body.file.curtext = &w.body
-		w.tag.file = NewFile("")
+		w.body.file.AddObserver(&w.body)
+		w.tag.file = file.MakeObservableEditableBuffer("", nil)
 		w.tag.w = w
 		w.tag.fr = &MockFrame{}
-		w.tag.file.text = []*Text{&w.tag}
-		w.tag.file.curtext = &w.tag
+		w.tag.file.AddObserver(&w.tag)
 		w.editoutlk = make(chan bool, 1)
 		return w
 	}
