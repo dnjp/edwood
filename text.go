@@ -422,7 +422,7 @@ func (t *Text) BsInsert(q0 int, r []rune, tofile bool) (q, nr int) {
 
 // inserted is a callback invoked by File on Insert* to update each Text
 // that is using a given File.
-func (t *Text) inserted(q0 int, r []rune) {
+func (t *Text) Inserted(q0 int, r []rune) {
 	if t.eq0 == -1 {
 		t.eq0 = q0
 	}
