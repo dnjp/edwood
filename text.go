@@ -841,16 +841,16 @@ func (t *Text) Type(r rune) {
 			}
 			tq0++ // go over newline
 
-			if tq0+fromstart >= nr {
-				return
+			if tq0 > nr {
+				tq0 = nr
 			}
 
-			a0 := tq0
-			for a0-tq0 < fromstart && t.ReadC(tq0) != '\n' {
-				a0++
+			start := tq0
+			for tq0-start < fromstart && tq0 < nr && t.ReadC(tq0) != '\n' {
+				tq0++
 			}
 
-			t.Show(a0, a0, true)
+			t.Show(tq0, tq0, true)
 		}
 		return
 	case draw.KeyDown:
