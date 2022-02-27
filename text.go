@@ -806,8 +806,25 @@ func (t *Text) Type(r rune) {
 		t.TypeCommit()
 
 		if t.q0 > 0 {
+
 			fromstart := t.q0 - t.BackNL(t.q0, 0)
-			tq0 := t.BackNL(t.q0-fromstart, 1) + fromstart
+			tq0 := t.q0 - 1 // tq0 is current char at index
+
+			// go to the end of the previous line
+			for tq0 > 0 && t.ReadC(tq0) != '\n' {
+				tq0--
+			}
+
+			// find beggining of the previous line
+			for tq0 > 0 && t.ReadC(tq0-1) != '\n' {
+				tq0--
+			}
+
+			// add offset if the previous line isn't empty
+			if t.ReadC(tq0) != '\n' {
+				tq0 += fromstart
+			}
+
 			t.Show(tq0, tq0, true)
 		}
 		return
