@@ -51,12 +51,12 @@ func handlePlumb(fsys plumbClient) {
 		if err != nil {
 			return
 		}
-		cplumb <- &m
+		global.cplumb <- &m
 	}
 }
 
 func startplumbing() {
-	cplumb = make(chan *plumb.Message)
+	global.cplumb = make(chan *plumb.Message)
 	go plumbthread()
 }
 
@@ -69,9 +69,9 @@ func look3(t *Text, q0 int, q1 int, external bool) {
 		//dir string
 	)
 
-	ct = seltext
+	ct = global.seltext
 	if ct == nil {
-		seltext = t
+		global.seltext = t
 	}
 	e, expanded := expand(t, q0, q1)
 	if !external && t.w != nil && t.w.nopen[QWevent] > 0 {
@@ -161,7 +161,7 @@ func look3(t *Text, q0 int, q1 int, external bool) {
 		r = make([]rune, n)
 		t.file.Read(e.q0, r)
 		if search(ct, r[:n]) && e.jump {
-			row.display.MoveTo(ct.fr.Ptofchar(getP0(ct.fr)).Add(image.Pt(4, ct.fr.DefaultFontHeight()-4)))
+			global.row.display.MoveTo(ct.fr.Ptofchar(getP0(ct.fr)).Add(image.Pt(4, ct.fr.DefaultFontHeight()-4)))
 		}
 	}
 }
@@ -189,7 +189,7 @@ func look3Message(t *Text, q0, q1 int) (*plumb.Message, error) {
 				}
 				q0--
 			}
-			for q1 < t.file.Size() {
+			for q1 < t.file.Nr() {
 				// TODO(rjk): utf8 conversion change point.
 				c := t.ReadC(q1)
 				if !(c != ' ' && c != '\t' && c != '\n') {
@@ -254,7 +254,6 @@ func plumbshow(m *plumb.Message) {
 	r, _, _ = util.Cvttorunes(m.Data, len(m.Data))
 	w.body.Insert(0, r, true)
 	w.body.file.Clean()
-	w.SetTag()
 	w.body.ScrDraw(w.body.fr.GetFrameFillStatus().Nchars)
 	w.tag.SetSelect(w.tag.Nc(), w.tag.Nc())
 	xfidlog(w, "new")
@@ -316,12 +315,11 @@ func search(ct *Text, r []rune) bool {
 		if runes.Equal(s[bi:limit], r) {
 			if ct.w != nil {
 				ct.Show(q, q+n, true)
-				ct.w.SetTag()
 			} else {
 				ct.q0 = q
 				ct.q1 = q + n
 			}
-			seltext = ct
+			global.seltext = ct
 			return true
 		}
 		nb--
@@ -357,7 +355,7 @@ func expandfile(t *Text, q0 int, q1 int, e *Expand) (success bool) {
 	if q1 == q0 {
 		colon := int(-1)
 		// TODO(rjk): utf8 conversion work.
-		for q1 < t.file.Size() {
+		for q1 < t.file.Nr() {
 			c := t.ReadC(q1)
 			if !isfilec(c) {
 				break
@@ -382,11 +380,11 @@ func expandfile(t *Text, q0 int, q1 int, e *Expand) (success bool) {
 		// otherwise terminate expansion at :
 		if colon >= 0 {
 			q1 = colon
-			if colon < t.file.Size()-1 {
+			if colon < t.file.Nr()-1 {
 				c := t.ReadC(colon + 1)
 				if isaddrc(c) {
 					q1 = colon + 1
-					for q1 < t.file.Size() {
+					for q1 < t.file.Nr() {
 						c := t.ReadC(q1)
 						if !isaddrc(c) {
 							break
@@ -398,14 +396,14 @@ func expandfile(t *Text, q0 int, q1 int, e *Expand) (success bool) {
 		}
 		if q1 > q0 {
 			if colon >= 0 { // stop at white space
-				for amax = colon + 1; amax < t.file.Size(); amax++ {
+				for amax = colon + 1; amax < t.file.Nr(); amax++ {
 					c := t.ReadC(amax)
 					if c == ' ' || c == '\t' || c == '\n' {
 						break
 					}
 				}
 			} else {
-				amax = t.file.Size()
+				amax = t.file.Nr()
 			}
 		}
 	}
@@ -423,7 +421,7 @@ func expandfile(t *Text, q0 int, q1 int, e *Expand) (success bool) {
 	nname := -1
 	for i, c := range rb {
 		if c == ':' && nname < 0 {
-			if q0+i+1 >= t.file.Size() {
+			if q0+i+1 >= t.file.Nr() {
 				return false
 			}
 			if i != n-1 {
@@ -496,7 +494,7 @@ func expand(t *Text, q0 int, q1 int) (*Expand, bool) {
 	}
 
 	if q0 == q1 {
-		for q1 < t.file.Size() && isalnum(t.ReadC(q1)) {
+		for q1 < t.file.Nr() && isalnum(t.ReadC(q1)) {
 			q1++
 		}
 		for q0 > 0 && isalnum(t.ReadC(q0-1)) {
@@ -511,7 +509,7 @@ func expand(t *Text, q0 int, q1 int) (*Expand, bool) {
 func lookfile(s string) *Window {
 	// avoid terminal slash on directories
 	s = strings.TrimRight(s, "/")
-	for _, c := range row.col {
+	for _, c := range global.row.col {
 		for _, w := range c.w {
 			k := strings.TrimRight(w.body.file.Name(), "/")
 			if k == s {
@@ -555,7 +553,7 @@ func openfile(t *Text, e *Expand) *Window {
 			// be configured to accept plumbed directories.
 			// Make the name a full path, just like we would if
 			// opening via the plumber.
-			rp := filepath.Join(wdir, e.name)
+			rp := filepath.Join(global.wdir, e.name)
 			rs = string(cleanrname([]rune(rp)))
 			e.name = rs
 			w = lookfile(e.name)
@@ -576,8 +574,7 @@ func openfile(t *Text, e *Expand) *Window {
 		w.SetName(e.name)
 		t.Load(0, e.name, true)
 		t.file.Clean()
-		t.w.SetTag()
-		t.w.tag.SetSelect(t.w.tag.file.Size(), t.w.tag.file.Size())
+		t.w.tag.SetSelect(t.w.tag.file.Nr(), t.w.tag.file.Nr())
 		if ow != nil {
 			for _, inc := range ow.incl {
 				w.AddIncl(inc)
@@ -606,10 +603,9 @@ func openfile(t *Text, e *Expand) *Window {
 		r.q1 = t.q1
 	}
 	t.Show(r.q0, r.q1, true)
-	t.w.SetTag()
-	seltext = t
+	global.seltext = t
 	if e.jump {
-		row.display.MoveTo(t.fr.Ptofchar(getP0(t.fr)).Add(image.Pt(4, fontget(tagfont, row.display).Height()-4)))
+		global.row.display.MoveTo(t.fr.Ptofchar(getP0(t.fr)).Add(image.Pt(4, fontget(global.tagfont, global.row.display).Height()-4)))
 	} else {
 		debug.PrintStack()
 	}
@@ -628,7 +624,8 @@ func newx(et *Text, t *Text, argt *Text, flag1 bool, flag2 bool, arg string) {
 	filenames := strings.Split(s, " ")
 	if len(filenames) == 1 && filenames[0] == "" && et.col != nil {
 		w := et.col.Add(nil, nil, -1)
-		w.SetTag()
+		// Note special case for empty windows.
+		w.ForceSetWindowTag()
 		xfidlog(w, "new")
 		return
 	}

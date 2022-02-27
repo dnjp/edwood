@@ -6,28 +6,22 @@ import (
 	"fmt"
 	"image"
 	"log"
-	"net/http"
-	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"path"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
 	"9fans.net/go/plumb"
 	"github.com/rjkroege/edwood/draw"
 	"github.com/rjkroege/edwood/dumpfile"
-	"github.com/rjkroege/edwood/frame"
-	"github.com/rjkroege/edwood/util"
 )
 
 var (
 	command []*Command
 
-	debugAddr         = flag.String("debug", "", "Serve debug information on the supplied address")
 	globalAutoIndent  = flag.Bool("a", false, "Start each window in autoindent mode")
 	barflag           = flag.Bool("b", false, "Click to focus window instead of focus follows mouse (Bart's flag)")
 	varfontflag       = flag.String("f", defaultVarFont, "Variable-width font")
@@ -38,9 +32,9 @@ var (
 )
 
 func main() {
-
 	// rfork(RFENVG|RFNAMEG); TODO(flux): I'm sure these are vitally(?) important.
 
+	// TODO(rjk): Unlimited concurrency please.
 	runtime.GOMAXPROCS(7)
 
 	var (
@@ -51,42 +45,21 @@ func main() {
 	flag.StringVar(&loadfile, "l", "", "Load state from file generated with Dump command")
 	flag.Parse()
 
-	if *debugAddr != "" {
-		go func() {
-			log.Println(http.ListenAndServe(*debugAddr, nil))
-		}()
-	}
+	startProfiler()
 
-	var err error
-	home, err = os.UserHomeDir()
-	if err != nil {
-		log.Fatalf("could not get user home directory: %v", err)
-	}
-	acmeshell = os.Getenv("acmeshell")
-	p := os.Getenv("tabstop")
-	if p != "" {
-		mt, _ := strconv.ParseInt(p, 10, 32)
-		maxtab = uint(mt)
-	}
-	if maxtab == 0 {
-		maxtab = 4
-	}
+	// Implicit to preserve existing semantics.
+	// TODO(rjk): Do this here.
+	// global = makeglobals()
+	g := global
 
-	b := os.Getenv("tabexpand")
-	if b != "" {
-		te, _ := strconv.ParseBool(b)
-		tabexpand = te
-	} else {
-		tabexpand = false
-	}
-
+	// TODO(rjk): Push this code into a separate function.
 	var dump *dumpfile.Content
 
 	if loadfile != "" {
 		d, err := dumpfile.Load(loadfile) // Overrides fonts selected up to here.
 		if err != nil {
 			// Maybe it's in legacy format. Try that too.
-			d, err = dumpfile.LoadLegacy(loadfile, home)
+			d, err = dumpfile.LoadLegacy(loadfile, g.home)
 		}
 		if err == nil {
 			if d.VarFont != "" {
@@ -99,13 +72,8 @@ func main() {
 		}
 	}
 
+	g.tagfont = *varfontflag
 	os.Setenv("font", *varfontflag)
-
-	// TODO(flux): this must be 9p open?  It's unused in the C code after its opening.
-	// Is it just somehow to keep it open?
-	//snarffd = open("/dev/snarf", OREAD|OCEXEC);
-
-	wdir, _ = os.Getwd()
 
 	draw.Main(func(dd *draw.Device) {
 		display, err := dd.NewDisplay(nil, *varfontflag, "edwood", *winsize)
@@ -117,37 +85,19 @@ func main() {
 		}
 		display.ScreenImage().Draw(display.ScreenImage().R(), display.White(), nil, image.Point{})
 
-		mousectl = display.InitMouse()
-		keyboardctl = display.InitKeyboard()
+		g.mousectl = display.InitMouse()
+		g.mouse = &g.mousectl.Mouse
+		g.keyboardctl = display.InitKeyboard()
 
-		tagfont = *varfontflag
-
-		iconinit(display)
-
-		cwait = make(chan ProcessState)
-		ccommand = make(chan *Command)
-		ckill = make(chan string)
-		cxfidalloc = make(chan *Xfid)
-		cxfidfree = make(chan *Xfid)
-		cnewwindow = make(chan *Window)
-		csignal = make(chan os.Signal, 1)
-		cerr = make(chan error)
-		cedit = make(chan int)
-		cexit = make(chan struct{})
-		cwarn = make(chan uint)
-
-		mousectl = display.InitMouse()
-		mouse = &mousectl.Mouse
+		g.iconinit(display)
 
 		startplumbing()
 		fs := fsysinit()
 
-		// disk = NewDisk()  TODO(flux): Let's be sure we'll avoid this paging stuff
-
 		const WindowsPerCol = 6
 
-		row.Init(display.ScreenImage().R(), display)
-		if loadfile == "" || row.Load(dump, loadfile, true) != nil {
+		g.row.Init(display.ScreenImage().R(), display)
+		if loadfile == "" || g.row.Load(dump, loadfile, true) != nil {
 			// Open the files from the command line, up to WindowsPerCol each
 			files := flag.Args()
 			if ncol < 0 {
@@ -164,18 +114,18 @@ func main() {
 				ncol = 2
 			}
 			for i := 0; i < ncol; i++ {
-				row.Add(nil, -1)
+				g.row.Add(nil, -1)
 			}
-			rightmostcol := row.col[len(row.col)-1]
+			rightmostcol := g.row.col[len(g.row.col)-1]
 			if len(files) == 0 {
-				readfile(row.col[len(row.col)-1], wdir)
+				readfile(g.row.col[len(g.row.col)-1], g.wdir)
 			} else {
 				for i, filename := range files {
 					// guide  always goes in the rightmost column
-					if filepath.Base(filename) == "guide" || i/WindowsPerCol >= len(row.col) {
+					if filepath.Base(filename) == "guide" || i/WindowsPerCol >= len(g.row.col) {
 						readfile(rightmostcol, filename)
 					} else {
-						readfile(row.col[i/WindowsPerCol], filename)
+						readfile(g.row.col[i/WindowsPerCol], filename)
 					}
 				}
 			}
@@ -183,23 +133,24 @@ func main() {
 		display.Flush()
 
 		// After row is initialized
+		// TODO(rjk): put the globals *in* the ctx?
 		ctx := context.Background()
-		go mousethread(display)
-		go keyboardthread(display)
-		go waitthread(ctx)
-		go newwindowthread()
-		go xfidallocthread(ctx, display)
+		go mousethread(g, display)
+		go keyboardthread(g, display)
+		go waitthread(g, ctx)
+		go newwindowthread(g)
+		go xfidallocthread(g, ctx, display)
 
 		signal.Ignore(ignoreSignals...)
-		signal.Notify(csignal, hangupSignals...)
+		signal.Notify(g.csignal, hangupSignals...)
 
 		select {
-		case <-cexit:
+		case <-g.cexit:
 			// Do nothing.
-		case <-csignal:
-			row.lk.Lock()
-			row.Dump("")
-			row.lk.Unlock()
+		case <-g.csignal:
+			g.row.lk.Lock()
+			g.row.Dump("")
+			g.row.lk.Unlock()
 		}
 		killprocs(fs)
 		os.Exit(0)
@@ -212,10 +163,9 @@ func readfile(c *Column, filename string) {
 	w.SetName(abspath)
 	w.body.Load(0, filename, true)
 	w.body.file.Clean()
-	w.SetTag()
 	w.Resize(w.r, false, true)
 	w.body.ScrDraw(w.body.fr.GetFrameFillStatus().Nchars)
-	w.tag.SetSelect(w.tag.file.Size(), w.tag.file.Size())
+	w.tag.SetSelect(w.tag.file.Nr(), w.tag.file.Nr())
 	xfidlog(w, "new")
 }
 
@@ -248,45 +198,6 @@ var boxcursor = draw.Cursor{
 		0x7F, 0xFE, 0x7F, 0xFE, 0x7F, 0xFE, 0x00, 0x00},
 }
 
-func iconinit(display draw.Display) {
-	//TODO(flux): Probably should de-globalize colors.
-	if tagcolors[frame.ColBack] == nil {
-		tagcolors[frame.ColBack] = display.White()
-		tagcolors[frame.ColHigh], _ = display.AllocImage(image.Rect(0, 0, 1, 1), display.ScreenImage().Pix(), true, 0xD2D7D3FF)
-		tagcolors[frame.ColBord], _ = display.AllocImage(image.Rect(0, 0, 1, 1), display.ScreenImage().Pix(), true, 0xDADFE1FF)
-		tagcolors[frame.ColText] = display.Black()
-		tagcolors[frame.ColHText] = display.Black()
-		textcolors[frame.ColBack], _ = display.AllocImage(image.Rect(0, 0, 1, 1), display.ScreenImage().Pix(), true, 0xFFFFF5FF)
-		textcolors[frame.ColHigh], _ = display.AllocImage(image.Rect(0, 0, 1, 1), display.ScreenImage().Pix(), true, 0xE8EBE9FF)
-		textcolors[frame.ColBord], _ = display.AllocImage(image.Rect(0, 0, 1, 1), display.ScreenImage().Pix(), true, 0xEEEEEEFF)
-		textcolors[frame.ColText] = display.Black()
-		textcolors[frame.ColHText] = display.Black()
-	}
-
-	// ...
-	r := image.Rect(0, 0, display.ScaleSize(Scrollwid+ButtonBorder), fontget(tagfont, display).Height()+1)
-	button, _ = display.AllocImage(r, display.ScreenImage().Pix(), false, draw.Notacolor)
-	button.Draw(r, tagcolors[frame.ColBack], nil, r.Min)
-	r.Max.X -= display.ScaleSize(ButtonBorder)
-	button.Border(r, display.ScaleSize(ButtonBorder), tagcolors[frame.ColBord], image.Point{})
-
-	r = button.R()
-	modbutton, _ = display.AllocImage(r, display.ScreenImage().Pix(), false, draw.Notacolor)
-	modbutton.Draw(r, tagcolors[frame.ColBack], nil, r.Min)
-	r.Max.X -= display.ScaleSize(ButtonBorder)
-	modbutton.Border(r, display.ScaleSize(ButtonBorder), tagcolors[frame.ColBord], image.Point{})
-	r = r.Inset(display.ScaleSize(ButtonBorder))
-	tmp, _ := display.AllocImage(image.Rect(0, 0, 1, 1), display.ScreenImage().Pix(), true, 0xD2D7D3FF)
-	modbutton.Draw(r, tmp, nil, image.Point{})
-
-	r = button.R()
-	colbutton, _ = display.AllocImage(r, display.ScreenImage().Pix(), false, 0xF3F1EFFF)
-
-	but2col, _ = display.AllocImage(image.Rect(0, 0, 1, 1), display.ScreenImage().Pix(), true, 0xAA0000FF)
-	but3col, _ = display.AllocImage(image.Rect(0, 0, 1, 1), display.ScreenImage().Pix(), true, 0x006600FF)
-
-}
-
 func ismtpt(filename string) bool {
 	m := *mtpt
 	if m == "" {
@@ -296,29 +207,30 @@ func ismtpt(filename string) bool {
 	return strings.HasPrefix(s, m) && (m[len(m)-1] == '/' || len(s) == len(m) || s[len(m)] == '/')
 }
 
-func mousethread(display draw.Display) {
+func mousethread(g *globals, display draw.Display) {
 	// TODO(rjk): Do we need this?
 	runtime.LockOSThread()
 
 	for {
-		row.lk.Lock()
+		g.row.lk.Lock()
 		flushwarnings()
-		row.lk.Unlock()
+		g.row.lk.Unlock()
 		display.Flush()
 		select {
-		case <-mousectl.Resize:
+		case <-g.mousectl.Resize:
 			if err := display.Attach(draw.Refnone); err != nil {
 				panic("failed to attach to window")
 			}
 			display.ScreenImage().Draw(display.ScreenImage().R(), display.White(), nil, image.Point{})
-			iconinit(display)
+			// TODO(rjk): We appear to have already done this.
+			g.iconinit(display)
 			ScrlResize(display)
-			row.Resize(display.ScreenImage().R())
-		case mousectl.Mouse = <-mousectl.C:
-			MovedMouse(mousectl.Mouse)
-		case <-cwarn:
+			g.row.Resize(display.ScreenImage().R())
+		case g.mousectl.Mouse = <-g.mousectl.C:
+			MovedMouse(g, g.mousectl.Mouse)
+		case <-g.cwarn:
 			// Do nothing
-		case pm := <-cplumb:
+		case pm := <-g.cplumb:
 			if pm.Type == "text" {
 				act := findattr(pm.Attr, "action")
 				if act == "" || act == "showfile" {
@@ -341,24 +253,24 @@ func findattr(attr *plumb.Attribute, s string) string {
 	return ""
 }
 
-func MovedMouse(m draw.Mouse) {
-	row.lk.Lock()
-	defer row.lk.Unlock()
+func MovedMouse(g *globals, m draw.Mouse) {
+	g.row.lk.Lock()
+	defer g.row.lk.Unlock()
 
-	t := row.Which(m.Point)
+	t := g.row.Which(m.Point)
 
-	if t != mousetext && t != nil && t.w != nil &&
-		(mousetext == nil || mousetext.w == nil || t.w.id != mousetext.w.id) {
+	if t != g.mousetext && t != nil && t.w != nil &&
+		(g.mousetext == nil || g.mousetext.w == nil || t.w.id != g.mousetext.w.id) {
 		xfidlog(t.w, "focus")
 	}
 
-	if t != mousetext && mousetext != nil && mousetext.w != nil {
-		mousetext.w.Lock('M')
-		mousetext.eq0 = ^0
-		mousetext.w.Commit(mousetext)
-		mousetext.w.Unlock()
+	if t != g.mousetext && g.mousetext != nil && g.mousetext.w != nil {
+		g.mousetext.w.Lock('M')
+		g.mousetext.eq0 = ^0
+		g.mousetext.w.Commit(g.mousetext)
+		g.mousetext.w.Unlock()
 	}
-	mousetext = t
+	g.mousetext = t
 	if t == nil {
 		return
 	}
@@ -375,7 +287,7 @@ func MovedMouse(m draw.Mouse) {
 	case 4:
 		but = 3
 	}
-	barttext = t
+	g.barttext = t
 	if t.what == Body && m.Point.In(t.scrollr) {
 		if but != 0 {
 			if *swapScrollButtons {
@@ -410,15 +322,15 @@ func MovedMouse(m draw.Mouse) {
 		if but != 0 {
 			switch t.what {
 			case Columntag:
-				row.DragCol(t.col, but)
+				g.row.DragCol(t.col, but)
 			case Tag:
 				t.col.DragWin(t.w, but)
 				if t.w != nil {
-					barttext = &t.w.body
+					g.barttext = &t.w.body
 				}
 			}
 			if t.col != nil {
-				activecol = t.col
+				g.activecol = t.col
 			}
 		}
 		return
@@ -437,17 +349,13 @@ func MovedMouse(m draw.Mouse) {
 		switch {
 		case m.Buttons&1 != 0:
 			t.Select()
-			if w != nil {
-				// This may replicate work done elsewhere.
-				w.SetTag()
-			}
-			argtext = t
-			seltext = t
+			g.argtext = t
+			g.seltext = t
 			if t.col != nil {
-				activecol = t.col // button 1 only
+				g.activecol = t.col // button 1 only
 			}
 			if t.w != nil && t == &t.w.body {
-				activewin = t.w
+				g.activewin = t.w
 			}
 		case m.Buttons&2 != 0:
 			if q0, q1, argt, ok := t.Select2(); ok {
@@ -462,7 +370,7 @@ func MovedMouse(m draw.Mouse) {
 	}
 }
 
-func keyboardthread(display draw.Display) {
+func keyboardthread(g *globals, display draw.Display) {
 	var (
 		timer *time.Timer
 		t     *Text
@@ -480,12 +388,12 @@ func keyboardthread(display draw.Display) {
 				t.w.Unlock()
 				display.Flush()
 			}
-		case r := <-keyboardctl.C:
+		case r := <-g.keyboardctl.C:
 			for {
-				typetext = row.Type(r, mouse.Point)
+				typetext = g.row.Type(r, g.mouse.Point)
 				t = typetext
 				if t != nil && t.col != nil && !(r == draw.KeyDown || r == draw.KeyLeft || r == draw.KeyRight) { // scrolling doesn't change activecol
-					activecol = t.col
+					g.activecol = t.col
 				}
 				if t != nil && t.w != nil {
 					// In a set of zeroxes, the last typed-in body becomes the currobserver.
@@ -502,7 +410,7 @@ func keyboardthread(display draw.Display) {
 					timerchan = emptyTimer
 				}
 				select {
-				case r = <-keyboardctl.C:
+				case r = <-g.keyboardctl.C:
 					continue
 				default:
 					display.Flush()
@@ -514,7 +422,7 @@ func keyboardthread(display draw.Display) {
 
 }
 
-func waitthread(ctx context.Context) {
+func waitthread(g *globals, ctx context.Context) {
 	// There is a race between process exiting and our finding out it was ever created.
 	// This structure keeps a list of processes that have exited we haven't heard of.
 	exited := make(map[int]ProcessState)
@@ -522,7 +430,7 @@ func waitthread(ctx context.Context) {
 	Freecmd := func(c *Command) {
 		if c != nil {
 			if c.iseditcommand {
-				cedit <- 0
+				g.cedit <- 0
 			}
 			mnt.DecRef(c.md) // mnt.Add in fsysmount
 		}
@@ -532,13 +440,13 @@ func waitthread(ctx context.Context) {
 		case <-ctx.Done():
 			return
 
-		case err := <-cerr:
-			row.lk.Lock()
+		case err := <-g.cerr:
+			g.row.lk.Lock()
 			warning(nil, "%s", err)
-			row.display.Flush()
-			row.lk.Unlock()
+			g.row.display.Flush()
+			g.row.lk.Unlock()
 
-		case cmd := <-ckill:
+		case cmd := <-g.ckill:
 			found := false
 			for _, c := range command {
 				if c.name == cmd+" " {
@@ -552,7 +460,7 @@ func waitthread(ctx context.Context) {
 				warning(nil, "Kill: no process %v\n", cmd)
 			}
 
-		case w := <-cwait:
+		case w := <-g.cwait:
 			var (
 				i int
 				c *Command
@@ -564,8 +472,8 @@ func waitthread(ctx context.Context) {
 					break
 				}
 			}
-			row.lk.Lock()
-			t := &row.tag
+			g.row.lk.Lock()
+			t := &g.row.tag
 			t.Commit()
 			if c == nil {
 				// command exited before we had a chance to add it to command list
@@ -578,12 +486,12 @@ func waitthread(ctx context.Context) {
 				if !w.Success() {
 					warning(c.md, "%s: %s\n", c.name, w.String())
 				}
-				row.display.Flush()
+				g.row.display.Flush()
 			}
-			row.lk.Unlock()
+			g.row.lk.Unlock()
 			Freecmd(c)
 
-		case c := <-ccommand:
+		case c := <-g.ccommand:
 			// has this command already exited?
 			if p, ok := exited[c.pid]; ok {
 				if msg := p.String(); msg != "" {
@@ -594,13 +502,13 @@ func waitthread(ctx context.Context) {
 				break
 			}
 			command = append(command, c)
-			row.lk.Lock()
-			t := &row.tag
+			g.row.lk.Lock()
+			t := &g.row.tag
 			t.Commit()
 			t.Insert(0, []rune(c.name), true)
 			t.SetSelect(0, 0)
-			row.display.Flush()
-			row.lk.Unlock()
+			g.row.display.Flush()
+			g.row.lk.Unlock()
 		}
 	}
 }
@@ -610,13 +518,13 @@ func waitthread(ctx context.Context) {
 // it instead of using a send and a receive to get one.
 // Frankly, it would be more idiomatic to let the GC take care of them,
 // though that would require an exit signal in xfidctl.
-func xfidallocthread(ctx context.Context, d draw.Display) {
+func xfidallocthread(g *globals, ctx context.Context, d draw.Display) {
 	xfree := (*Xfid)(nil)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-cxfidalloc:
+		case <-g.cxfidalloc:
 			x := xfree
 			if x != nil {
 				xfree = x.next
@@ -625,8 +533,8 @@ func xfidallocthread(ctx context.Context, d draw.Display) {
 				x.c = make(chan func(*Xfid))
 				go xfidctl(x, d)
 			}
-			cxfidalloc <- x
-		case x := <-cxfidfree:
+			g.cxfidalloc <- x
+		case x := <-g.cxfidfree:
 			x.next = xfree
 			xfree = x
 		}
@@ -634,16 +542,17 @@ func xfidallocthread(ctx context.Context, d draw.Display) {
 
 }
 
-func newwindowthread() {
+func newwindowthread(g *globals) {
 	var w *Window
 
 	for {
 		// only fsysproc is talking to us, so synchronization is trivial
-		<-cnewwindow
+		<-g.cnewwindow
+
+		// TODO(rjk): Should this be in a row lock?
 		w = makenewwindow(nil)
-		w.SetTag()
 		xfidlog(w, "new")
-		cnewwindow <- w
+		g.cnewwindow <- w
 	}
 
 }
@@ -660,7 +569,7 @@ type errorWriter struct{}
 func (w errorWriter) Write(data []byte) (n int, err error) {
 	n = len(data)
 	if n > 0 {
-		cerr <- fmt.Errorf(string(data))
+		global.cerr <- fmt.Errorf(string(data))
 	}
 	return
 }
@@ -673,15 +582,13 @@ func (w errorWriter) Close() error {
 const MAXSNARF = 100 * 1024
 
 func acmeputsnarf() {
-	r := make([]rune, snarfbuf.Nc())
-	snarfbuf.Read(0, r[:snarfbuf.Nc()])
-	row.display.WriteSnarf([]byte(string(r)))
+	global.row.display.WriteSnarf(global.snarfbuf)
 }
 
 func acmegetsnarf() {
+	// TODO(rjk): use the non-blocking interface on platforms that have one
+	// for big snarfs
 	b := make([]byte, MAXSNARF)
-	n, _, _ := row.display.ReadSnarf(b)
-	r, _, _ := util.Cvttorunes(b, n)
-	snarfbuf.Reset()
-	snarfbuf.Insert(0, r)
+	n, _, _ := global.row.display.ReadSnarf(b)
+	global.snarfbuf = b[0:n]
 }

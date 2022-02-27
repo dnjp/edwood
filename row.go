@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"image"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,12 +35,12 @@ func (row *Row) Init(r image.Rectangle, dis draw.Display) *Row {
 	row.col = []*Column{}
 	row.r = r
 	r1 := r
-	r1.Max.Y = r1.Min.Y + fontget(tagfont, row.display).Height()
+	r1.Max.Y = r1.Min.Y + fontget(global.tagfont, row.display).Height()
 	t := &row.tag
 	f := file.MakeObservableEditableBuffer("", nil)
 	f.AddObserver(t)
 	t.file = f
-	t.Init(r1, tagfont, tagcolors, row.display)
+	t.Init(r1, global.tagfont, global.tagcolors, row.display)
 	t.what = Rowtag
 	t.row = row
 	t.w = nil
@@ -48,7 +49,7 @@ func (row *Row) Init(r image.Rectangle, dis draw.Display) *Row {
 	r1.Max.Y += row.display.ScaleSize(Border)
 	row.display.ScreenImage().Draw(r1, row.display.Black(), nil, image.Point{})
 	t.Insert(0, []rune(RowTag+" "), true)
-	t.SetSelect(t.file.Size(), t.file.Size())
+	t.SetSelect(t.file.Nr(), t.file.Nr())
 	return row
 }
 
@@ -105,30 +106,30 @@ func (row *Row) Add(c *Column, x int) *Column {
 }
 
 func (r *Row) Resize(rect image.Rectangle) {
-	or := row.r
-	row.r = rect
+	or := global.row.r
+	global.row.r = rect
 	r1 := rect
-	r1.Max.Y = r1.Min.Y + fontget(tagfont, r.display).Height()
-	row.tag.Resize(r1, true, false)
+	r1.Max.Y = r1.Min.Y + fontget(global.tagfont, r.display).Height()
+	global.row.tag.Resize(r1, true, false)
 	r1.Min.Y = r1.Max.Y
-	r1.Max.Y += row.display.ScaleSize(Border)
-	row.display.ScreenImage().Draw(r1, row.display.Black(), nil, image.Point{})
+	r1.Max.Y += global.row.display.ScaleSize(Border)
+	global.row.display.ScreenImage().Draw(r1, global.row.display.Black(), nil, image.Point{})
 	rect.Min.Y = r1.Max.Y
 	r1 = rect
 	r1.Max.X = r1.Min.X
-	for i := 0; i < len(row.col); i++ {
-		c := row.col[i]
+	for i := 0; i < len(global.row.col); i++ {
+		c := global.row.col[i]
 		r1.Min.X = r1.Max.X
 		// the test should not be necessary, but guarantee we don't lose a pixel
-		if i == len(row.col)-1 {
+		if i == len(global.row.col)-1 {
 			r1.Max.X = rect.Max.X
 		} else {
 			r1.Max.X = rect.Min.X + (c.r.Max.X-or.Min.X)*rect.Dx()/or.Dx()
 		}
 		if i > 0 {
 			r2 := r1
-			r2.Max.X = r2.Min.X + row.display.ScaleSize(Border)
-			row.display.ScreenImage().Draw(r2, row.display.Black(), nil, image.Point{})
+			r2.Max.X = r2.Min.X + global.row.display.ScaleSize(Border)
+			global.row.display.ScreenImage().Draw(r2, global.row.display.Black(), nil, image.Point{})
 			r1.Min.X = r2.Max.X
 		}
 		c.Resize(r1)
@@ -144,15 +145,15 @@ func (row *Row) DragCol(c *Column, _ int) {
 	)
 	clearmouse()
 	row.display.SetCursor(&boxcursor)
-	b = mouse.Buttons
-	op = mouse.Point
-	for mouse.Buttons == b {
-		mousectl.Read()
+	b = global.mouse.Buttons
+	op = global.mouse.Point
+	for global.mouse.Buttons == b {
+		global.mousectl.Read()
 	}
 	row.display.SetCursor(nil)
-	if mouse.Buttons != 0 {
-		for mouse.Buttons != 0 {
-			mousectl.Read()
+	if global.mouse.Buttons != 0 {
+		for global.mouse.Buttons != 0 {
+			global.mousectl.Read()
 		}
 		return
 	}
@@ -165,7 +166,7 @@ func (row *Row) DragCol(c *Column, _ int) {
 	util.AcmeError("can't find column", nil)
 
 Found:
-	p = mouse.Point
+	p = global.mouse.Point
 	if util.Abs(p.X-op.X) < 5 && util.Abs(p.Y-op.Y) < 5 {
 		return
 	}
@@ -243,8 +244,8 @@ Found:
 }
 
 func (r *Row) WhichCol(p image.Point) *Column {
-	for i := 0; i < len(row.col); i++ {
-		c := row.col[i]
+	for i := 0; i < len(global.row.col); i++ {
+		c := global.row.col[i]
 		if p.In(c.r) {
 			return c
 		}
@@ -253,10 +254,10 @@ func (r *Row) WhichCol(p image.Point) *Column {
 }
 
 func (r *Row) Which(p image.Point) *Text {
-	if p.In(row.tag.all) {
-		return &row.tag
+	if p.In(global.row.tag.all) {
+		return &global.row.tag
 	}
-	c := row.WhichCol(p)
+	c := global.row.WhichCol(p)
 	if c != nil {
 		return c.Which(p)
 	}
@@ -276,7 +277,7 @@ func (row *Row) Type(r rune, p image.Point) *Text {
 	clearmouse()
 	row.lk.Lock()
 	if *barflag {
-		t = barttext
+		t = global.barttext
 	} else {
 		t = row.Which(p)
 	}
@@ -341,7 +342,7 @@ func (r *Row) dump() (*dumpfile.Content, error) {
 		rowTag = rowTag[i:]
 	}
 	dump := &dumpfile.Content{
-		CurrentDir: wdir,
+		CurrentDir: global.wdir,
 		VarFont:    *varfontflag,
 		FixedFont:  *fixedfontflag,
 		RowTag: dumpfile.Text{
@@ -356,8 +357,12 @@ func (r *Row) dump() (*dumpfile.Content, error) {
 	dumpid := make(map[*file.ObservableEditableBuffer]int)
 
 	for i, c := range r.col {
+		pos := 100.0 * float64(c.r.Min.X-global.row.r.Min.X) / float64(r.r.Dx())
+		if math.IsNaN(pos) || math.IsInf(pos, 0) {
+			pos = 0.
+		}
 		dump.Columns[i] = dumpfile.Column{
-			Position: 100.0 * float64(c.r.Min.X-row.r.Min.X) / float64(r.r.Dx()),
+			Position: pos,
 			Tag: dumpfile.Text{
 				Buffer: c.tag.file.String(),
 				Q0:     c.tag.q0,
@@ -393,6 +398,10 @@ func (r *Row) dump() (*dumpfile.Content, error) {
 			// We always include the font name.
 			fontname := t.font
 
+			pos := 100.0 * float64(w.r.Min.Y-c.r.Min.Y) / float64(c.r.Dy())
+			if math.IsNaN(pos) || math.IsInf(pos, 0) {
+				pos = 0.
+			}
 			dump.Windows = append(dump.Windows, &dumpfile.Window{
 				Column: i,
 				Body: dumpfile.Text{
@@ -400,7 +409,7 @@ func (r *Row) dump() (*dumpfile.Content, error) {
 					Q0:     w.body.q0,
 					Q1:     w.body.q1,
 				},
-				Position: 100.0 * float64(w.r.Min.Y-c.r.Min.Y) / float64(c.r.Dy()),
+				Position: pos,
 				Font:     fontname,
 			})
 			dw := dump.Windows[len(dump.Windows)-1]
@@ -468,24 +477,41 @@ func (row *Row) loadhelper(win *dumpfile.Window) error {
 	if win.Type != dumpfile.Zerox {
 		w.SetName(subl[0])
 	}
+	if subl[0] == "" {
+		// TODO(rjk): I can remove this and just load the tag from the dumpfile?
+		// An empty unmutated tag will not have its tag setup so force that to
+		// happen.
+		w.ForceSetWindowTag()
+	}
 
-	// TODO(rjk): I feel that the code for managing tags could be extracted and unified.
-	// Maybe later. Window.setTag1 would seem fixable.
+	// TODO(rjk): I feel that the code for managing tags could be extracted
+	// and unified. Maybe later. Window.setTag1 would seem fixable. This code
+	// doesn't really belong here. The planned tagindex scheme would subsume
+	// this logic? We'd build the index from the contents of the buffer?
 	afterbar := strings.SplitN(subl[1], "|", 2)
 	if len(afterbar) != 2 {
 		return fmt.Errorf("bad window tag in dump file %q", win.Tag)
 	}
 	w.ClearTag()
 
-	w.tag.Insert(w.tag.file.Size(), []rune(afterbar[1]), true)
-	w.tag.Show(win.Tag.Q0, win.Tag.Q1, true)
+	w.tag.Insert(w.tag.file.Nr(), []rune(afterbar[1]), true)
+
+	// Handle coordinates outside of the tag text.
+	tnr := w.tag.file.Nr()
+	t0, t1 := win.Tag.Q0, win.Tag.Q1
+	if t0 > tnr {
+		t0 = tnr
+	}
+	if t1 > tnr {
+		t1 = tnr
+	}
+
+	w.tag.Show(t0, t1, true)
 
 	if win.Type == dumpfile.Unsaved {
 		w.body.LoadReader(0, subl[0], strings.NewReader(win.Body.Buffer), true)
 		w.body.file.Modded()
 
-		// This shows an example where an observer would be useful?
-		w.SetTag()
 	} else if win.Type != dumpfile.Zerox && len(subl[0]) > 0 && subl[0][0] != '+' && subl[0][0] != '-' {
 		// Implementation of the Get command: open the file.
 		get(&w.body, nil, nil, false, false, "")
@@ -497,7 +523,7 @@ func (row *Row) loadhelper(win *dumpfile.Window) error {
 
 	q0 := win.Body.Q0
 	q1 := win.Body.Q1
-	if q0 > w.body.file.Size() || q1 > w.body.file.Size() || q0 > q1 {
+	if q0 > w.body.file.Nr() || q1 > w.body.file.Nr() || q0 > q1 {
 		q0 = 0
 		q1 = 0
 	}
@@ -544,7 +570,7 @@ func (row *Row) loadimpl(dump *dumpfile.Content, initing bool) error {
 	if err := os.Chdir(dump.CurrentDir); err != nil {
 		return err
 	}
-	wdir = dump.CurrentDir
+	global.wdir = dump.CurrentDir
 
 	// variable width font
 	*varfontflag = dump.VarFont
@@ -600,7 +626,7 @@ func (row *Row) loadimpl(dump *dumpfile.Content, initing bool) error {
 	}
 
 	// Set row tag
-	row.tag.Delete(0, row.tag.file.Size(), true)
+	row.tag.Delete(0, row.tag.file.Nr(), true)
 	row.tag.Insert(0, []rune(dump.RowTag.Buffer), true)
 	row.tag.Show(dump.RowTag.Q0, dump.RowTag.Q1, true)
 
@@ -609,7 +635,7 @@ func (row *Row) loadimpl(dump *dumpfile.Content, initing bool) error {
 		// Acme's handling of column headers is perplexing. It is conceivable
 		// that this code does not do the right thing even if it replicates Acme
 		// correctly.
-		row.col[i].tag.Delete(0, row.col[i].tag.file.Size(), true)
+		row.col[i].tag.Delete(0, row.col[i].tag.file.Nr(), true)
 		row.col[i].tag.Insert(0, []rune(col.Tag.Buffer), true)
 		row.col[i].tag.Show(col.Tag.Q0, col.Tag.Q1, true)
 	}
@@ -620,7 +646,7 @@ func (row *Row) loadimpl(dump *dumpfile.Content, initing bool) error {
 		case dumpfile.Exec: // command block
 			dirline := win.ExecDir
 			if dirline == "" {
-				dirline = home
+				dirline = global.home
 			}
 			// log.Println("cmdline", cmdline, "dirline", dirline)
 			run(nil, win.ExecCommand, dirline, true, "", "", false)
@@ -657,9 +683,9 @@ func (r *Row) LookupWin(id int) *Window {
 }
 
 func defaultDumpFile() (string, error) {
-	if home == "" {
+	if global.home == "" {
 		return "", fmt.Errorf("can't find home directory")
 	}
 	// Lower risk of simultaneous use of edwood and acme.
-	return filepath.Join(home, "edwood.dump"), nil
+	return filepath.Join(global.home, "edwood.dump"), nil
 }

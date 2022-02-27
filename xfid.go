@@ -41,7 +41,7 @@ func xfidctl(x *Xfid, d draw.Display) {
 		if d != nil {
 			d.Flush()
 		} // d here is for testability.
-		cxfidfree <- x
+		global.cxfidfree <- x
 	}
 }
 
@@ -52,9 +52,9 @@ func xfidflush(x *Xfid) {
 	xfidlogflush(x)
 
 	// search windows for matching tag
-	row.lk.Lock()
-	defer row.lk.Unlock()
-	for _, c := range row.col {
+	global.row.lk.Lock()
+	defer global.row.lk.Unlock()
+	for _, c := range global.row.col {
 		for _, w := range c.w {
 			w.Lock('E')
 			wx := w.eventx
@@ -101,7 +101,6 @@ func xfidopen(x *Xfid) {
 			if w.nopen[q] == 0 {
 				if !w.body.file.IsDir() && w.col != nil {
 					w.filemenu = false
-					w.SetTag()
 				}
 			}
 			w.nopen[q]++
@@ -136,13 +135,13 @@ func xfidopen(x *Xfid) {
 			w.rdselfd = tmp
 		case QWwrsel:
 			w.nopen[q]++
-			seq++
-			t.file.Mark(seq)
+			global.seq++
+			t.file.Mark(global.seq)
 			cut(t, t, nil, false, true, "")
 			w.wrselrange = Range{t.q1, t.q1}
 			w.nomark = true
 		case QWeditout:
-			if editing == Inactive {
+			if global.editing == Inactive {
 				w.Unlock()
 				x.respond(&fc, ErrPermission)
 				return
@@ -163,7 +162,7 @@ func xfidopen(x *Xfid) {
 			xfidlogopen(x)
 		case Qeditout:
 			select {
-			case editoutlk <- true:
+			case global.editoutlk <- true:
 			default:
 				x.respond(&fc, ErrInUse)
 				return
@@ -198,7 +197,7 @@ func xfidclose(x *Xfid) {
 		// We need to lock row here before locking window (just like mousethread)
 		// in order to synchronize mousetext with mousethread: mousetext is
 		// set to nil when the associated window is closed.
-		row.lk.Lock()
+		global.row.lk.Lock()
 		w.Lock('E')
 		switch q {
 		case QWctl:
@@ -219,7 +218,6 @@ func xfidclose(x *Xfid) {
 				}
 				if q == QWevent && !w.body.file.IsDir() && w.col != nil {
 					w.filemenu = true
-					w.SetTag()
 				}
 				if q == QWevent {
 					w.dumpstr = ""
@@ -239,11 +237,11 @@ func xfidclose(x *Xfid) {
 		}
 		w.Close()
 		w.Unlock()
-		row.lk.Unlock()
+		global.row.lk.Unlock()
 	} else {
 		switch q {
 		case Qeditout:
-			<-editoutlk
+			<-global.editoutlk
 		}
 	}
 	x.respond(&fc, nil)
@@ -413,8 +411,8 @@ func xfidwrite(x *Xfid) {
 				t.Insert(q0, r, true)
 			} else {
 				if !w.nomark {
-					seq++
-					t.file.Mark(seq)
+					global.seq++
+					t.file.Mark(global.seq)
 				}
 				q, nr := t.BsInsert(q0, r, true) // TODO(flux): BsInsert returns nr?
 				q0 = q
@@ -424,7 +422,6 @@ func xfidwrite(x *Xfid) {
 				}
 				t.ScrDraw(t.fr.GetFrameFillStatus().Nchars)
 			}
-			w.SetTag()
 			if qid == QWwrsel {
 				w.wrselrange.q1 += len(r)
 			}
@@ -436,7 +433,9 @@ func xfidwrite(x *Xfid) {
 	//x.fcall.Data[x.fcall.Count] = 0; // null-terminate. unneeded
 	switch qid {
 	case Qcons:
+		global.row.lk.Lock()
 		w = errorwin(x.f.mntdir, 'X')
+		global.row.lk.Unlock()
 		updateText(&w.body)
 
 	case Qlabel:
@@ -497,8 +496,8 @@ func xfidwrite(x *Xfid) {
 		}
 		r, _, _ := util.Cvttorunes(x.fcall.Data, int(x.fcall.Count))
 		if !w.nomark {
-			seq++
-			t.file.Mark(seq)
+			global.seq++
+			t.file.Mark(global.seq)
 		}
 		q0 := a.q0
 		if a.q1 > q0 {
@@ -519,7 +518,6 @@ func xfidwrite(x *Xfid) {
 			t.Show(q0+len(r), q0+len(r), false)
 		}
 		t.ScrDraw(t.fr.GetFrameFillStatus().Nchars)
-		w.SetTag()
 		w.addr.q0 += len(r)
 		w.addr.q1 = w.addr.q0
 		fc.Count = x.fcall.Count
@@ -544,7 +542,6 @@ func xfidctlwrite(x *Xfid, w *Window) {
 	// defer log.Println("done xfidctlwrite")
 	var err error
 	const scrdraw = false
-	settag := false
 
 	w.tag.Commit()
 	lines := strings.Split(string(x.fcall.Data), "\n")
@@ -579,14 +576,11 @@ forloop:
 		case "clean": // mark window 'clean', seq=0
 			t := &w.body
 			t.eq0 = ^0
-			t.file.Reset()
 			t.file.Clean()
-			settag = true
 		case "dirty": // mark window 'dirty'
 			t := &w.body
 			// doesn't change sequence number, so "Put" won't appear.  it shouldn't.
 			t.file.Modded()
-			settag = true
 		case "show": // show dot
 			t := &w.body
 			t.Show(t.q0, t.q1, true)
@@ -606,8 +600,8 @@ forloop:
 					break forloop
 				}
 			}
-			seq++
-			w.body.file.Mark(seq)
+			global.seq++
+			w.body.file.Mark(global.seq)
 			w.SetName(string(r))
 		case "dump": // set dump string
 			if len(words) < 2 {
@@ -651,7 +645,6 @@ forloop:
 			w.body.q0 = w.addr.q0
 			w.body.q1 = w.addr.q1
 			w.body.SetSelect(w.body.q0, w.body.q1)
-			settag = true
 		case "addr=dot": // set addr
 			w.addr.q0 = w.body.q0
 			w.addr.q1 = w.body.q1
@@ -663,16 +656,14 @@ forloop:
 		case "nomark": // turn off automatic marking
 			w.nomark = true
 		case "mark": // mark file
-			seq++
-			w.body.file.Mark(seq)
-			settag = true
+			global.seq++
+			w.body.file.Mark(global.seq)
 		case "nomenu": // turn off automatic menu
 			w.filemenu = false
 		case "menu": // enable automatic menu
 			w.filemenu = true
 		case "cleartag": // wipe tag right of bar
 			w.ClearTag()
-			settag = true
 		case "font":
 			if len(words) < 2 {
 				err = ErrBadCtl
@@ -702,9 +693,6 @@ forloop:
 	}
 	x.respond(&fc, err)
 
-	if settag && w != nil {
-		w.SetTag()
-	}
 	if scrdraw && w != nil {
 		t := &w.body
 		w.body.ScrDraw(t.fr.GetFrameFillStatus().Nchars)
@@ -719,12 +707,12 @@ func xfideventwrite(x *Xfid, w *Window) {
 	rowLock := func() {
 		defer w.Lock(w.owner)
 		w.Unlock() // sets w.owner to 0
-		row.lk.Lock()
+		global.row.lk.Lock()
 	}
 	rowUnlock := func() {
 		defer w.Lock(w.owner)
 		w.Unlock() // sets w.owner to 0
-		row.lk.Unlock()
+		global.row.lk.Unlock()
 	}
 
 	// The messages have a fixed format: a character indicating the
@@ -958,9 +946,9 @@ func xfidindexread(x *Xfid) {
 	// read using a very small buffer and we create/delete windows
 	// in-between the requests.
 
-	row.lk.Lock()
+	global.row.lk.Lock()
 	nmax := 0
-	for _, c := range row.col {
+	for _, c := range global.row.col {
 		for _, w := range c.w {
 			nmax += Ctlsize + w.tag.Nc()*utf8.UTFMax + 1
 		}
@@ -968,7 +956,7 @@ func xfidindexread(x *Xfid) {
 
 	nmax++
 	var sb strings.Builder
-	for _, c := range row.col {
+	for _, c := range global.row.col {
 		for _, w := range c.w {
 			// only show the currently active window of a set
 			if w.body.file.GetCurObserver().(*Text) != &w.body {
@@ -987,7 +975,7 @@ func xfidindexread(x *Xfid) {
 			sb.WriteString("\n")
 		}
 	}
-	row.lk.Unlock()
+	global.row.lk.Unlock()
 
 	var fc plan9.Fcall
 	ninep.ReadString(&fc, &x.fcall, sb.String())

@@ -116,7 +116,7 @@ func cmdexec(t *Text, cp *Cmd) bool {
 }
 
 func edittext(w *Window, q int, r []rune) error {
-	switch editing {
+	switch global.editing {
 	case Inactive:
 		return ErrPermission
 	case Inserting:
@@ -210,6 +210,12 @@ func d_cmd(t *Text, cp *Cmd) bool {
 func D1(t *Text) {
 	if t.w.body.file.HasMultipleObservers() || t.w.Clean(false) {
 		t.col.Close(t.w, true)
+
+		// To fix #385, we must decrement the selected target window's
+		// ref count one extra time.
+		if t.w.body.file.HasMultipleObservers() {
+			t.w.ref.Dec()
+		}
 	}
 }
 
@@ -467,7 +473,7 @@ func u_cmd(t *Text, cp *Cmd) bool {
 
 func w_cmd(t *Text, cp *Cmd) bool {
 	file := t.file
-	if file.Seq() == seq {
+	if file.Seq() == global.seq {
 		editerror("can't write file with pending modifications")
 	}
 	r := cmdname(t.file, cp.text, false)
@@ -524,7 +530,7 @@ func runpipe(t *Text, cmd rune, cr []rune, state int) {
 	s = append([]rune{cmd}, r...)
 
 	dir := t.DirName("") // exec.Cmd.Dir
-	editing = state
+	global.editing = state
 	if t != nil && t.w != nil {
 		t.w.ref.Inc()
 	}
@@ -532,8 +538,8 @@ func runpipe(t *Text, cmd rune, cr []rune, state int) {
 	if t != nil && t.w != nil {
 		t.w.Unlock()
 	}
-	row.lk.Unlock()
-	<-cedit
+	global.row.lk.Unlock()
+	<-global.cedit
 	//
 	// The editoutlk exists only so that we can tell when
 	// the editout file has been closed.  It can get closed *after*
@@ -545,14 +551,14 @@ func runpipe(t *Text, cmd rune, cr []rune, state int) {
 	// 9P transactions.  This process might still have a couple
 	// writes left to copy after the original process has exited.
 	//
-	q := editoutlk
+	q := global.editoutlk
 	if w != nil {
 		q = w.editoutlk
 	}
 	q <- true // wait for file to close
 	<-q
-	row.lk.Lock()
-	editing = Inactive
+	global.row.lk.Lock()
+	global.editing = Inactive
 	if t != nil && t.w != nil {
 		t.w.Lock('M')
 	}
@@ -860,14 +866,17 @@ func filelooper(t *Text, cp *Cmd, XY bool) {
 	loopstruct.cp = cp
 	loopstruct.XY = XY
 	loopstruct.w = []*Window{}
-	row.AllWindows(func(w *Window) { alllooper(w, &loopstruct) })
+	// Construct the list of windows to work on.
+	global.row.AllWindows(func(w *Window) { alllooper(w, &loopstruct) })
 
 	// add a ref to all windows to keep safe windows accessed by X
 	// that would not otherwise have a ref to hold them up during
 	// the shenanigans.  note this with globalincref so that any
 	// newly created windows start with an extra reference.
-	row.AllWindows(func(w *Window) { alllocker(w, true) })
-	globalincref = true
+	// TODO(rjk): We lock all windows but only mutate some of them?
+	// Improve concurrency opportunities.
+	global.row.AllWindows(func(w *Window) { alllocker(w, true) })
+	global.globalincref = true
 
 	// Unlock the window running the X command.
 	// We'll need to lock and unlock each target window in turn.
@@ -875,6 +884,7 @@ func filelooper(t *Text, cp *Cmd, XY bool) {
 		t.w.Unlock()
 	}
 
+	// alllooper generates the list of subject windows above.
 	for i := range loopstruct.w {
 		targ := &loopstruct.w[i].body
 		if targ != nil && targ.w != nil {
@@ -890,8 +900,8 @@ func filelooper(t *Text, cp *Cmd, XY bool) {
 		t.w.Lock(int(cp.cmdc))
 	}
 
-	row.AllWindows(func(w *Window) { alllocker(w, false) })
-	globalincref = false
+	global.row.AllWindows(func(w *Window) { alllocker(w, false) })
+	global.globalincref = false
 	loopstruct.w = nil
 
 	Glooping--
@@ -1079,7 +1089,7 @@ func toOEB(r string) *file.ObservableEditableBuffer {
 
 	t.r = strings.TrimLeft(r, " \t\n")
 	t.oeb = nil
-	row.AllWindows(func(w *Window) { alltofile(w, &t) })
+	global.row.AllWindows(func(w *Window) { alltofile(w, &t) })
 	if t.oeb == nil {
 		editerror("no such file\"%v\"", t.r)
 	}
@@ -1110,7 +1120,7 @@ func matchfile(r string) *file.ObservableEditableBuffer {
 
 	tf.oeb = nil
 	tf.r = r
-	row.AllWindows(func(w *Window) { allmatchfile(w, &tf) })
+	global.row.AllWindows(func(w *Window) { allmatchfile(w, &tf) })
 
 	if tf.oeb == nil {
 		editerror("no file matches \"%v\"", r)
@@ -1184,7 +1194,7 @@ func lineaddr(l int, addr Address, sign int) Address {
 			}
 			for n < l {
 				// TODO(rjk) utf8 buffer issue p
-				if p >= file.Size() {
+				if p >= file.Nr() {
 					editerror("address out of range")
 				}
 				if f.ReadC(p) == '\n' {
@@ -1194,7 +1204,7 @@ func lineaddr(l int, addr Address, sign int) Address {
 			}
 			a.r.q0 = p
 		}
-		for p < f.Size() && f.ReadC(p) != '\n' {
+		for p < f.Nr() && f.ReadC(p) != '\n' {
 			p++
 		}
 		a.r.q1 = p
@@ -1268,15 +1278,14 @@ func cmdname(oeb *file.ObservableEditableBuffer, str string, set bool) string {
 	}
 	fc.f = oeb
 	fc.r = r
-	row.AllWindows(func(w *Window) { allfilecheck(w, &fc) })
+	global.row.AllWindows(func(w *Window) { allfilecheck(w, &fc) })
 	if oeb.Name() == "" {
 		set = true
 	}
 
 Return:
 	if set && !(r == oeb.Name()) {
-		oeb.Mark(seq)
-		oeb.Modded()
+		oeb.Mark(global.seq)
 		cur.w.SetName(r)
 	}
 	return r

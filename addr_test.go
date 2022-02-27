@@ -95,7 +95,7 @@ func TestAcmeregexp(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			warnings = nil
 			text := &Text{
-				file: file.MakeObservableEditableBufferTag(file.RuneArray([]rune("abcd αβξδ\n"))),
+				file: file.MakeObservableEditableBuffer("", []rune("abcd αβξδ\n")),
 			}
 			lim := Range{
 				0,
@@ -117,7 +117,7 @@ func TestAcmeregexp(t *testing.T) {
 				if len(warnings) == 0 {
 					t.Fatalf("no warning generated; want %q", want)
 				}
-				got := string([]rune(warnings[0].buf))
+				got := warnings[0].buf.String()
 				if got != want {
 					t.Errorf("warning is %q; want %q", got, want)
 				}

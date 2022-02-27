@@ -2,15 +2,14 @@ package main
 
 import (
 	"fmt"
-	"image"
 	"io/ioutil"
 	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
-	"github.com/rjkroege/edwood/draw"
+	"github.com/google/go-cmp/cmp"
 	"github.com/rjkroege/edwood/dumpfile"
-	"github.com/rjkroege/edwood/frame"
 )
 
 type teststimulus struct {
@@ -24,7 +23,7 @@ type teststimulus struct {
 func TestEdit(t *testing.T) {
 	runfunc = mockrun
 	defer func() { runfunc = run }()
-	cedit = make(chan int)
+	global.cedit = make(chan int)
 
 	testtab := []teststimulus{
 		// 0
@@ -107,16 +106,24 @@ func TestEdit(t *testing.T) {
 		warnings = []*Warning{}
 		warningsMu.Unlock()
 
-		w := makeSkeletonWindowModel(test.dot, test.filename)
+		FlexiblyMakeWindowScaffold(
+			t,
+			ScWin(test.filename),
+			ScBody(test.filename, contents),
+			ScBodyRange(test.filename, test.dot),
+			ScWin("alt_example_2"),
+			ScBody("alt_example_2", alt_contents),
+		)
+		w := global.row.col[0].w[0]
 
 		// All middle button commands including Edit run inside a lock discipline
 		// set up by MovedMouse. We need to mirror this for external process
 		// accessing Edit commands.
-		row.lk.Lock()
+		global.row.lk.Lock()
 		w.Lock('M')
 		editcmd(&w.body, []rune(test.expr))
 		w.Unlock()
-		row.lk.Unlock()
+		global.row.lk.Unlock()
 
 		n, _ := w.body.ReadB(0, buf[:])
 		if string(buf[:n]) != test.expected {
@@ -133,9 +140,9 @@ func TestEdit(t *testing.T) {
 		}
 
 		for j, tw := range test.expectedwarns {
-			n, _ := warnings[j].buf.Read(0, buf[:])
-			if string(buf[:n]) != tw {
-				t.Errorf("test %d: Warning %d contents expected \n%#v\nbut got \n%#v\n", i, j, tw, string(buf[:n]))
+			wb := warnings[j].buf.Bytes()
+			if string(wb) != tw {
+				t.Errorf("test %d: Warning %d contents expected \n%#v\nbut got \n%#v\n", i, j, tw, string(wb))
 			}
 
 		}
@@ -143,40 +150,9 @@ func TestEdit(t *testing.T) {
 	}
 }
 
+// TODO(rjk): Make longer names.
 const contents = "This is a\nshort text\nto try addressing\n"
 const alt_contents = "A different text\nWith other contents\nSo there!\n"
-
-func makeSkeletonWindowModel(dot Range, filename string) *Window {
-	MakeWindowScaffold(&dumpfile.Content{
-		Columns: []dumpfile.Column{
-			{},
-		},
-		Windows: []*dumpfile.Window{
-			{
-				Column: 0,
-				Tag: dumpfile.Text{
-					Buffer: filename,
-				},
-				Body: dumpfile.Text{
-					Buffer: contents,
-					Q0:     dot.q0,
-					Q1:     dot.q1,
-				},
-			},
-			{
-				Column: 0,
-				Tag: dumpfile.Text{
-					Buffer: "alt_example_2",
-				},
-				Body: dumpfile.Text{
-					Buffer: alt_contents,
-				},
-			},
-		},
-	})
-
-	return row.col[0].w[0]
-}
 
 func makeTempFile(contents string) (string, func(), error) {
 	tfd, err := ioutil.TempFile("", "example")
@@ -211,6 +187,8 @@ func TestEditCmdWithFile(t *testing.T) {
 		// r
 		{Range{0, 0}, fname, "r " + fname, contents + contents, []string{}},
 		{Range{0, len(contents)}, fname, "r " + fname, contents, []string{}},
+
+		// TODO(rjk): Test what happens with undo and edit combined.
 	}
 
 	filedirtystates := []struct {
@@ -226,35 +204,53 @@ func TestEditCmdWithFile(t *testing.T) {
 	buf := make([]rune, 8192)
 
 	for i, test := range testtab {
-		warnings = []*Warning{}
-		w := makeSkeletonWindowModel(test.dot, test.filename)
+		t.Run(test.expr, func(t *testing.T) {
+			t.Logf("cmd: %q", test.expr)
+			warnings = []*Warning{}
 
-		editcmd(&w.body, []rune(test.expr))
+			FlexiblyMakeWindowScaffold(
+				t,
+				ScWin(test.filename),
+				ScBody(test.filename, contents),
+				ScBodyRange(test.filename, test.dot),
+				ScWin("alt_example_2"),
+				ScBody("alt_example_2", alt_contents),
+			)
+			w := global.row.col[0].w[0]
 
-		n, _ := w.body.ReadB(0, buf[:])
-		if string(buf[:n]) != test.expected {
-			t.Errorf("test %d: TestAppend expected \n%v\nbut got \n%v\n", i, test.expected, string(buf[:n]))
-		}
+			// The filename actually exists so needs to start as if it's saved.
+			global.seq = 1
+			w.body.file.Clean()
 
-		// For e identical.
-		if got, want := w.body.file.Dirty(), filedirtystates[i].Dirty; got != want {
-			t.Errorf("test %d: File bad Dirty state. Got %v, want %v: dump %s", i, got, want /* litter.Sdump(w.body.file) */, "")
-		}
-		if got, want := w.body.file.SaveableAndDirty(), filedirtystates[i].SaveableAndDirty; got != want {
-			t.Errorf("test %d: File bad SaveableAndDirty state. Got %v, want %v: dump %s", i, got, want /* litter.Sdump(w.body.file) */, "")
-		}
+			// Bump seq before every undoable mutation.
+			global.seq++
+			editcmd(&w.body, []rune(test.expr))
 
-		if got, want := len(warnings), len(test.expectedwarns); got != want {
-			t.Errorf("test %d: expected %d warnings but got %d warnings", i, want, got)
-			break
-		}
-
-		for j, tw := range test.expectedwarns {
-			n, _ := warnings[j].buf.Read(0, buf[:])
-			if string(buf[:n]) != tw {
-				t.Errorf("test %d: Warning %d contents expected \n%#v\nbut got \n%#v\n", i, j, tw, string(buf[:n]))
+			n, _ := w.body.ReadB(0, buf[:])
+			if string(buf[:n]) != test.expected {
+				t.Errorf("test %d: TestAppend expected \n%v\nbut got \n%v\n", i, test.expected, string(buf[:n]))
 			}
-		}
+
+			// For e identical.
+			if got, want := w.body.file.Dirty(), filedirtystates[i].Dirty; got != want {
+				t.Errorf("test %d: File bad Dirty state. Got %v, want %v: dump %s", i, got, want /* litter.Sdump(w.body.file) */, "")
+			}
+			if got, want := w.body.file.SaveableAndDirty(), filedirtystates[i].SaveableAndDirty; got != want {
+				t.Errorf("test %d: File bad SaveableAndDirty state. Got %v, want %v: dump %s", i, got, want /* litter.Sdump(w.body.file) */, "")
+			}
+
+			if got, want := len(warnings), len(test.expectedwarns); got != want {
+				t.Errorf("test %d: expected %d warnings but got %d warnings", i, want, got)
+				return
+			}
+
+			for j, tw := range test.expectedwarns {
+				wb := warnings[j].buf.Bytes()
+				if string(wb) != tw {
+					t.Errorf("test %d: Warning %d contents expected \n%#v\nbut got \n%#v\n", i, j, tw, string(wb))
+				}
+			}
+		})
 	}
 }
 
@@ -332,20 +328,34 @@ func TestEditMultipleWindows(t *testing.T) {
 			contents,
 			"inserted" + alt_contents,
 		}, []string{
-			"'+  alt_example_2\n",
+			" +  alt_example_2\n", // NB: scaffold-built buffer starts as not-dirty
 		}},
 		{Range{0, 0}, "test", "b alt_example_2\n1 i/1/\n2 i/2/\n", []string{
 			contents,
 			"1A different text\n2With other contents\nSo there!\n",
 		}, []string{
-			"'+  alt_example_2\n",
+			" +  alt_example_2\n",
 		}},
 		// TODO(rjk): the edit result here is wrong. See #236.
 		{Range{0, 0}, "test", "b alt_example_2\n2 i/2/\n1 i/1/\n", []string{
 			contents,
 			"1A different text2\nWith other contents\nSo there!\n",
 		}, []string{
-			"'+  alt_example_2\nwarning: changes out of sequence\nwarning: changes out of sequence, edit result probably wrong\n",
+			" +  alt_example_2\nwarning: changes out of sequence\nwarning: changes out of sequence, edit result probably wrong\n",
+		}},
+
+		{Range{0, 0}, "test", "b alt_example_2\ni/inserted/\nb alt_example_2\n", []string{
+			contents,
+			"inserted" + alt_contents,
+		}, []string{
+			// This is the value that I'd expect. But each Edit command only updates
+			// the Dirty status of the buffers at the end of executing all of the
+			// commands in a single invocation. This isn't really correct. But we do
+			// it because calling ObservableEditableBuffer.Mark multiple times would
+			// result in multiple Undo points for a single Edit command application.
+			// And that's more wrong (from a usability perspective.
+			// " +  alt_example_2\n'+. alt_example_2\n", // NB: scaffold-built buffer starts as not-dirty
+			" +  alt_example_2\n +. alt_example_2\n", // NB: scaffold-built buffer starts as not-dirty
 		}},
 
 		// u
@@ -362,55 +372,68 @@ func TestEditMultipleWindows(t *testing.T) {
 			"hello" + contents,
 			alt_contents,
 		}, []string{"This is a\nshort text\nto try addressing\n"}},
+
+		// TODO(rjk): multiple actions: X, u, e combos
 	}
 
 	buf := make([]rune, 8192)
 
 	for i, test := range testtab {
-		warnings = []*Warning{}
-		makeSkeletonWindowModel(test.dot, test.filename)
+		t.Run(test.expr, func(t *testing.T) {
+			t.Logf("[%d] command %q", i, test.expr)
+			warnings = []*Warning{}
+			FlexiblyMakeWindowScaffold(
+				t,
+				ScWin(test.filename),
+				ScBody(test.filename, contents),
+				ScBodyRange(test.filename, test.dot),
+				ScWin("alt_example_2"),
+				ScBody("alt_example_2", alt_contents),
+			)
+			global.seq = 1
 
-		// TODO(rjk): Make this nicer.
-		if i == 11 || i == 12 {
-			// special setup for undo
-			InsertString(row.col[0].w[0], "hello")
-			if i == 12 {
-				// Undo the above insertion.
-				row.col[0].w[0].Undo(true)
-			}
-		}
-
-		w := row.col[0].w[0]
-		w.Lock('M')
-		editcmd(&w.body, []rune(test.expr))
-		w.Unlock()
-
-		if got, want := len(row.col[0].w), len(test.expected); got != want {
-			t.Errorf("test %d: expected %d windows but got %d windows", i, want, got)
-			break
-		}
-
-		for j, exp := range test.expected {
-			w := row.col[0].w[j]
-			n, _ := w.body.ReadB(0, buf[:])
-			if string(buf[:n]) != exp {
-				t.Errorf("test %d: Window %d File.b contents expected %#v\nbut got \n%#v\n", i, j, exp, string(buf[:n]))
+			// TODO(rjk): Make this nicer.
+			if test.expr == "1,$p\nu" || test.expr == "1,$p\nu-1\n" {
+				// special setup for undo
+				InsertString(global.row.col[0].w[0], "hello")
+				if test.expr == "1,$p\nu-1\n" {
+					// Undo the above insertion.
+					global.row.col[0].w[0].Undo(true)
+				}
 			}
 
-		}
+			w := global.row.col[0].w[0]
+			w.Lock('M')
+			global.seq++
+			editcmd(&w.body, []rune(test.expr))
+			w.Unlock()
 
-		if got, want := len(warnings), len(test.expectedwarns); got != want {
-			t.Errorf("test %d: expected %d warnings but got %d warnings", i, want, got)
-			break
-		}
-
-		for j, tw := range test.expectedwarns {
-			n, _ := warnings[j].buf.Read(0, buf[:])
-			if string(buf[:n]) != tw {
-				t.Errorf("test %d: Warning %d contents expected \n%#v\nbut got \n%#v\n", i, j, tw, string(buf[:n]))
+			if got, want := len(global.row.col[0].w), len(test.expected); got != want {
+				t.Errorf("test %d: expected %d windows but got %d windows", i, want, got)
+				return
 			}
-		}
-		// TODO(rjk): Validate that the files on disk have the correct state.
+
+			for j, exp := range test.expected {
+				w := global.row.col[0].w[j]
+				n, _ := w.body.ReadB(0, buf[:])
+				if string(buf[:n]) != exp {
+					t.Errorf("test %d: Window %d File.b contents expected %#v\nbut got \n%#v\n", i, j, exp, string(buf[:n]))
+				}
+			}
+
+			if got, want := len(warnings), len(test.expectedwarns); got != want {
+				t.Errorf("test %d: expected %d warnings but got %d warnings", i, want, got)
+				return
+			}
+
+			for j, tw := range test.expectedwarns {
+				wb := warnings[j].buf.Bytes()
+				if string(wb) != tw {
+					t.Errorf("test %d: Warning %d contents expected \n%#v\nbut got \n%#v\n", i, j, tw, string(wb))
+				}
+			}
+			// TODO(rjk): Create backing disk files and enforce their state.
+		})
 	}
 }
 
@@ -647,39 +670,6 @@ func TestBadDelimiterError(t *testing.T) {
 	}
 }
 
-// MockFrame is a mock implementation of a frame.Frame that does nothing.
-type MockFrame struct{}
-
-func (mf *MockFrame) GetFrameFillStatus() frame.FrameFillStatus {
-	return frame.FrameFillStatus{
-		Nchars:         0,
-		Nlines:         0,
-		Maxlines:       0,
-		MaxPixelHeight: 0,
-	}
-}
-func (mf *MockFrame) Charofpt(pt image.Point) int                  { return 0 }
-func (mf *MockFrame) DefaultFontHeight() int                       { return 10 }
-func (mf *MockFrame) Delete(int, int) int                          { return 0 }
-func (mf *MockFrame) Insert([]rune, int) bool                      { return false }
-func (mf *MockFrame) IsLastLineFull() bool                         { return false }
-func (mf *MockFrame) Rect() image.Rectangle                        { return image.Rect(0, 0, 0, 0) }
-func (mf *MockFrame) TextOccupiedHeight(r image.Rectangle) int     { return 0 }
-func (mf *MockFrame) Maxtab(_ int)                                 {}
-func (mf *MockFrame) GetMaxtab() int                               { return 0 }
-func (mf *MockFrame) Init(image.Rectangle, ...frame.OptionClosure) {}
-func (mf *MockFrame) Clear(bool)                                   {}
-func (mf *MockFrame) Ptofchar(int) image.Point                     { return image.Point{0, 0} }
-func (mf *MockFrame) Redraw(enclosing image.Rectangle)             {}
-func (mf *MockFrame) GetSelectionExtent() (int, int)               { return 0, 0 }
-func (mf *MockFrame) Select(*draw.Mousectl, *draw.Mouse, func(frame.SelectScrollUpdater, int)) (int, int) {
-	return 0, 0
-}
-func (mf *MockFrame) SelectOpt(*draw.Mousectl, *draw.Mouse, func(frame.SelectScrollUpdater, int), draw.Image, draw.Image) (int, int) {
-	return 0, 0
-}
-func (mf *MockFrame) DrawSel(image.Point, int, int, bool) {}
-
 func mockrun(win *Window, s string, rdir string, newns bool, argaddr string, xarg string, iseditcmd bool) {
 	// Optionally generate an error.
 	if s[1:] == "error" {
@@ -698,13 +688,166 @@ func mockrun(win *Window, s string, rdir string, newns bool, argaddr string, xar
 		ds := fmt.Sprintf("{%#v %#v %#v %#v %#v %#v}", s, rdir, newns, argaddr, xarg, iseditcmd)
 
 		if s[0] != '>' {
-			row.lk.Lock()
+			global.row.lk.Lock()
 			win.Lock('M')
 			edittext(win, 4, []rune(ds))
 			win.Unlock()
-			row.lk.Unlock()
+			global.row.lk.Unlock()
 		}
 
-		cedit <- 0
+		global.cedit <- 0
 	}()
+}
+
+func closeWindowWithEdit(t *testing.T, g *globals) {
+	t.Helper()
+
+	firstwin := g.row.col[0].w[0]
+	// Do I need to lock the warning?
+
+	// Lock discipline?
+	// TODO(rjk): figure out how to change this with less global dependency.
+	global.row.lk.Lock()
+	firstwin.Lock('M')
+	global.seq++
+
+	action := "X:" + "firstfile" + ": D"
+	editcmd(&firstwin.body, []rune(action))
+	firstwin.Unlock()
+	global.row.lk.Unlock()
+}
+
+func firstCloseMutatedWindow(t *testing.T, g *globals) {
+	t.Helper()
+
+	// Make one buffer mutated.
+	mutateWithEdit(t, g)
+
+	// One X/blah/ D
+	closeWindowWithEdit(t, g)
+}
+
+func secondCloseMutateWindow(t *testing.T, g *globals) {
+	t.Helper()
+
+	// Make one buffer mutated.
+	mutateWithEdit(t, g)
+
+	// Two X/blah/ D
+	closeWindowWithEdit(t, g)
+	closeWindowWithEdit(t, g)
+}
+
+// Test more complex sequences of Edit ations or Edit mixed with exec.
+func TestComplexEditActions(t *testing.T) {
+	dir := t.TempDir()
+	firstfilename := filepath.Join(dir, "firstfile")
+	secondfilename := filepath.Join(dir, "secondfile")
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current working directory: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		fn   func(t *testing.T, g *globals)
+		want *dumpfile.Content
+	}{
+		{
+			name: "firstCloseMutatedWindow",
+			fn:   firstCloseMutatedWindow,
+			want: &dumpfile.Content{
+				CurrentDir: cwd,
+				VarFont:    defaultVarFont,
+				FixedFont:  defaultFixedFont,
+				Columns: []dumpfile.Column{
+					{},
+				},
+				Windows: []*dumpfile.Window{
+					{
+						Type:   dumpfile.Unsaved,
+						Column: 0,
+						Tag: dumpfile.Text{
+							Buffer: firstfilename + " Del Snarf Undo Put | Look Edit ",
+						},
+						Body: dumpfile.Text{
+							Buffer: "This is a\nshort TEXT\nto try addressing\n",
+							Q0:     16,
+							Q1:     20,
+						},
+					},
+					{
+						Type:   dumpfile.Unsaved,
+						Column: 0,
+						Tag: dumpfile.Text{
+							Buffer: secondfilename + " Del Snarf Undo Put | Look Edit ",
+						},
+						Body: dumpfile.Text{
+							Buffer: "A different TEXT\nWith other contents\nSo there!\n",
+							Q0:     12,
+							Q1:     16,
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "secondCloseMutateWindow",
+			fn:   secondCloseMutateWindow,
+			want: &dumpfile.Content{
+				CurrentDir: cwd,
+				VarFont:    defaultVarFont,
+				FixedFont:  defaultFixedFont,
+				Columns: []dumpfile.Column{
+					{},
+				},
+				Windows: []*dumpfile.Window{
+					{
+						Type:   dumpfile.Unsaved,
+						Column: 0,
+						Tag: dumpfile.Text{
+							Buffer: secondfilename + " Del Snarf Undo Put | Look Edit ",
+						},
+						Body: dumpfile.Text{
+							Buffer: "A different TEXT\nWith other contents\nSo there!\n",
+							Q0:     12,
+							Q1:     16,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			FlexiblyMakeWindowScaffold(
+				t,
+				ScWin("firstfile"),
+				ScBody("firstfile", contents),
+				ScDir(dir, "firstfile"),
+				ScWin("secondfile"),
+				ScBody("secondfile", alt_contents),
+				ScDir(dir, "secondfile"),
+			)
+			// Probably there are other issues here...
+			t.Log("seq", global.seq)
+			t.Log("seq, w0", global.row.col[0].w[0].body.file.Seq())
+			t.Log("seq, w1", global.row.col[0].w[1].body.file.Seq())
+
+			tc.fn(t, global)
+
+			t.Log(*varfontflag, defaultVarFont)
+
+			got, err := global.row.dump()
+			if err != nil {
+				t.Fatalf("dump failed: %v", err)
+			}
+
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("dump mismatch (-want +got):\n%s", diff)
+			}
+
+		})
+	}
 }

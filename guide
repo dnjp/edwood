@@ -1,3 +1,18 @@
+// Basics
+Edit X:edwood/\+Errors: 1,$d
+X:edwood/.*\.go: w
+
+go build -tags debug
+./testedwood.sh
+
+go test -covermode=count -coverprofile=count.out
+go tool cover -html=count.out
+
+go test --run 'TestFlushWarnings' -covermode=count -coverprofile=count.out
+
+// Edit commands for converting C to Go
+cs 'flushwarnings\('
+
 ",
 { x/->/c/./
 x/TRUE/c/true/

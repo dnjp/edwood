@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"github.com/rjkroege/edwood/file"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -11,6 +10,7 @@ import (
 
 	"9fans.net/go/plumb"
 	"github.com/google/go-cmp/cmp"
+	"github.com/rjkroege/edwood/file"
 	"github.com/rjkroege/edwood/runes"
 )
 
@@ -60,7 +60,7 @@ func TestExpand(t *testing.T) {
 		t.Run(fmt.Sprintf("test-%02d", i), func(t *testing.T) {
 			r := []rune(tc.s)
 			text := &Text{
-				file: file.MakeObservableEditableBufferTag(file.RuneArray(r)),
+				file: file.MakeObservableEditableBuffer("", r),
 				q0:   0,
 				q1:   tc.sel1,
 			}
@@ -98,7 +98,7 @@ func TestExpandJump(t *testing.T) {
 
 	for _, tc := range tt {
 		text := &Text{
-			file: file.MakeObservableEditableBufferTag([]rune("chicken")),
+			file: file.MakeObservableEditableBuffer("", []rune("chicken")),
 			q0:   0,
 			q1:   5,
 			what: tc.kind,
@@ -111,13 +111,16 @@ func TestExpandJump(t *testing.T) {
 }
 
 func TestLook3Message(t *testing.T) {
-	wdir = "/home/gopher"
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current working directory: %v", err)
+	}
+
+	global.wdir = cwd
 	winDir := "/a/b/c"
 	if runtime.GOOS == "windows" {
-		wdir = `C:\User\gopher`
 		winDir = `C:\a\b\c`
 	}
-	defer func() { wdir = "" }()
 
 	for _, tc := range []struct {
 		name         string
@@ -126,9 +129,9 @@ func TestLook3Message(t *testing.T) {
 		text         string
 		hasClickAttr bool
 	}{
-		{"NilWindow", nil, wdir, " hello.go ", true},
-		{"Error", nil, wdir, "          ", true},
-		{"InSelection", nil, wdir, " «hello.go» ", false},
+		{"NilWindow", nil, global.wdir, " hello.go ", true},
+		{"Error", nil, global.wdir, "          ", true},
+		{"InSelection", nil, global.wdir, " «hello.go» ", false},
 		{
 			"NonNilWindow",
 			windowWithTag(winDir + string(filepath.Separator) + " Del Snarf | Look"),
