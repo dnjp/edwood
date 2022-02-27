@@ -778,7 +778,7 @@ func (t *Text) Type(r rune) {
 	}
 
 	switch r {
-	case draw.KeyLeft:
+	case draw.KeyLeft, 0x02 /* ^B */ :
 		t.TypeCommit()
 		if t.q0 > 0 {
 			if t.q0 != t.q1 {
@@ -788,7 +788,7 @@ func (t *Text) Type(r rune) {
 			}
 		}
 		return
-	case draw.KeyRight:
+	case draw.KeyRight, 0x06 /* ^F */ :
 		t.TypeCommit()
 		if t.q1 < t.file.Nr() {
 			// This is a departure from the plan9/plan9port acme
@@ -800,6 +800,40 @@ func (t *Text) Type(r rune) {
 			} else {
 				t.Show(t.q1+1, t.q1+1, true)
 			}
+		}
+		return
+	case 0x10: // ^P - move up a line
+		t.TypeCommit()
+
+		if t.q0 > 0 {
+			fromstart := t.q0 - t.BackNL(t.q0, 0)
+			tq0 := t.BackNL(t.q0-fromstart, 1) + fromstart
+			t.Show(tq0, tq0, true)
+		}
+		return
+	case 0x0E: // ^N - move down a line
+		t.TypeCommit()
+
+		if t.q0 >= 0 {
+			nr := t.file.Nr()
+			fromstart := t.q0 - t.BackNL(t.q0, 0)
+
+			tq0 := t.q0
+			for tq0 != nr && t.ReadC(tq0) != '\n' {
+				tq0++
+			}
+			tq0++ // go over newline
+
+			if tq0+fromstart >= nr {
+				return
+			}
+
+			a0 := tq0
+			for a0-tq0 < fromstart && t.ReadC(tq0) != '\n' {
+				a0++
+			}
+
+			t.Show(a0, a0, true)
 		}
 		return
 	case draw.KeyDown:
@@ -942,7 +976,7 @@ func (t *Text) Type(r rune) {
 	}
 	t.Show(t.q0, t.q0, true)
 	switch r {
-	case 0x06:
+	case draw.KeyCmd + 'i':
 		fallthrough // ^F: complete
 	case draw.KeyInsert:
 		t.TypeCommit()
